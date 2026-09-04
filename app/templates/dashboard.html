@@ -146,7 +146,13 @@
 <script>
 let ME = null;
 async function api(path, opts={}) {
-  const r = await fetch(path, opts);
+  let r;
+  try {
+    r = await fetch(path, opts);
+  } catch (e) {
+    toast('Network error — check your connection and retry.', 'err');
+    throw e;
+  }
   if (r.status === 401) { location.href = '/login'; throw new Error('login'); }
   return r;
 }
@@ -176,10 +182,14 @@ async function sendCustom() {
   const m = document.getElementById('sendMsg');
   const r = await api('/api/send-custom', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({content: document.getElementById('customText').value})});
-  m.textContent = r.ok ? (await r.json()).msg : await r.text();
+  const text = r.ok ? (await r.json()).msg : await r.text();
+  m.textContent = text;
   m.className = r.ok ? 'msg msg-ok' : 'msg msg-err';
+  toast(r.ok ? 'Custom message sent to Discord!' : text, r.ok ? 'ok' : 'err');
   if (r.ok) document.getElementById('customText').value = '';
 }
+function subById(id) { return (ALL_SUBS || []).find(s => s.id === id); }
+function subLabel(s) { return s ? `${dispHandle(s)} on ${PLATFORMS[platOf(s)].label}` : 'creator'; }
 function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fmtTime(iso){ if(!iso) return 'never'; const d = new Date(iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z'); return isNaN(d) ? iso.slice(0,16).replace('T',' ') : d.toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}); }
 
@@ -354,9 +364,11 @@ async function saveEdit() {
     color: cleared ? null : document.getElementById('m_color').value,
   };
   const r = await api('/api/subscriptions/'+EDITING_ID+'/style',{method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  const t = r.ok ? (await r.json()).msg : await r.text();
   const m = document.getElementById('m_msg2');
-  m.textContent = r.ok ? (await r.json()).msg : await r.text();
+  m.textContent = t;
   m.className = r.ok ? 'msg msg-ok' : 'msg msg-err';
+  toast(t, r.ok ? 'ok' : 'err');
   if (r.ok) { closeModal(); loadSubs(); }
 }
 
@@ -366,7 +378,7 @@ function discordHex(colorInt) {
 }
 async function previewSub(id) {
   const r = await api('/api/subscriptions/'+id+'/payload');
-  if (!r.ok) { alert(await r.text()); return; }
+  if (!r.ok) { toast(await r.text(), 'err'); return; }
   const p = await r.json();
   const emb = (p.embeds || [])[0] || {};
   const btns = (((p.components || [])[0] || {}).components || []);
@@ -404,17 +416,29 @@ async function previewSub(id) {
 async function forceSub(id) {
   if (!confirm('Send the live notification now, even if this creator looks offline?')) return;
   const r = await api('/api/subscriptions/'+id+'/force-notify', {method:'POST'});
-  alert(r.ok ? (await r.json()).msg : await r.text());
+  const t = r.ok ? (await r.json()).msg : await r.text();
+  toast(t, r.ok ? 'ok' : 'err');
 }
-async function testSub(id){ const r = await api('/api/subscriptions/'+id+'/test',{method:'POST'}); alert(r.ok?'Test sent! Check Discord.':await r.text()); }
-async function delSub(id){ if(!confirm('Remove this creator?'))return; const r = await api('/api/subscriptions/'+id,{method:'DELETE'}); if(r.ok) loadSubs(); else alert(await r.text()); }
+async function testSub(id){ const r = await api('/api/subscriptions/'+id+'/test',{method:'POST'}); toast(r.ok?'Test sent! Check Discord.':await r.text(), r.ok ? 'ok' : 'err'); }
+async function delSub(id){
+  const s = subById(id);
+  if(!confirm('Remove this creator?'))return;
+  const r = await api('/api/subscriptions/'+id,{method:'DELETE'});
+  if(r.ok) { toast(`Removed ${subLabel(s)}`, 'ok'); loadSubs(); }
+  else toast(await r.text(), 'err');
+}
 document.getElementById('addForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const r = await api('/api/subscriptions',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({platform: PLATFORM, creator_input: tiktokInput.value})});
   const m = document.getElementById('addMsg');
-  m.textContent = r.ok ? (await r.json()).msg : await r.text();
+  const input = tiktokInput.value;
+  const t = r.ok ? (await r.json()).msg : await r.text();
+  m.textContent = t;
   m.className = r.ok ? 'msg msg-ok' : 'msg msg-err';
-  if (r.ok) { tiktokInput.value=''; loadSubs(); }
+  if (r.ok) {
+    toast(`Creator ${input} has been added to ${PLATFORMS[PLATFORM].label}`, 'ok');
+    tiktokInput.value=''; loadSubs();
+  } else toast(t, 'err');
 });
 
 // --- global defaults ---
@@ -445,16 +469,20 @@ async function saveSettings() {
   const body = {webhook_url: webhook.value, ping_role_id: role.value || null, ping_everyone: pingEveryone.checked,
     custom_message: message.value, embed_image_url: defImage.value || null, embed_color: defColor.value};
   const r = await api('/api/settings',{method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-  settingsMsg.textContent = r.ok ? 'Saved!' : await r.text();
+  const t = r.ok ? 'Saved!' : await r.text();
+  settingsMsg.textContent = t;
   settingsMsg.className = r.ok ? 'msg msg-ok' : 'msg msg-err';
+  toast(r.ok ? 'Global defaults saved!' : t, r.ok ? 'ok' : 'err');
   if (r.ok) loadSubs();
 }
 document.getElementById('pwForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const r = await api('/api/me/password',{method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({current_password: pwCurrent.value || null, new_password: pwNew.value})});
-  pwMsg.textContent = r.ok ? 'Password updated!' : await r.text();
+  const t = r.ok ? 'Password updated!' : await r.text();
+  pwMsg.textContent = t;
   pwMsg.className = r.ok ? 'msg msg-ok' : 'msg msg-err';
+  toast(t, r.ok ? 'ok' : 'err');
   if (r.ok) { pwCurrent.value=''; pwNew.value=''; }
 });
 
@@ -476,12 +504,14 @@ document.getElementById('adminForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const r = await api('/api/admins',{method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({username: adminUser.value, password: adminPass.value, role: adminRole.value})});
-  adminMsg.textContent = r.ok ? (await r.json()).msg : await r.text();
+  const t = r.ok ? (await r.json()).msg : await r.text();
+  adminMsg.textContent = t;
   adminMsg.className = r.ok ? 'msg msg-ok' : 'msg msg-err';
+  toast(t, r.ok ? 'ok' : 'err');
   if (r.ok) { adminUser.value=''; adminPass.value=''; loadAdmins(); }
 });
-async function toggleAdmin(id){ const r = await api('/api/admins/'+id+'/toggle',{method:'POST'}); if(r.ok) loadAdmins(); else alert(await r.text()); }
-async function delAdmin(id){ if(!confirm('Delete this account?'))return; const r = await api('/api/admins/'+id,{method:'DELETE'}); if(r.ok) loadAdmins(); else alert(await r.text()); }
+async function toggleAdmin(id){ const r = await api('/api/admins/'+id+'/toggle',{method:'POST'}); if(r.ok) { toast('Admin updated', 'ok'); loadAdmins(); } else toast(await r.text(), 'err'); }
+async function delAdmin(id){ if(!confirm('Delete this account?'))return; const r = await api('/api/admins/'+id,{method:'DELETE'}); if(r.ok) { toast('Admin deleted', 'ok'); loadAdmins(); } else toast(await r.text(), 'err'); }
 
 // --- audit (superadmin) ---
 async function loadAudit() {

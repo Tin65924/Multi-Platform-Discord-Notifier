@@ -6,7 +6,7 @@
 <title>{% block title %}PlaytopiaLive{% endblock %}</title>
 <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
 <link rel="stylesheet" href="/static/css/official.css?v=4">
-<link rel="stylesheet" href="/static/css/playtopia.css?v=5">
+<link rel="stylesheet" href="/static/css/playtopia.css?v=6">
 {% block head %}{% endblock %}
 </head>
 <body class="pt-body">
@@ -30,6 +30,29 @@
     <span class="pt-footer__sub">Built for Playtopia - TINNN &bull; Live notifier</span>
   </div>
 </footer>
+<div id="ptToasts" class="pt-toasts" aria-live="polite"></div>
+<script>
+/* Global toast: toast('Creator @x added to TikTok') or toast('...', 'err') */
+function toast(msg, type) {
+  const box = document.getElementById('ptToasts');
+  if (!box) return;
+  const el = document.createElement('div');
+  el.className = 'pt-toast' + (type === 'err' ? ' err' : type === 'ok' ? ' ok' : '');
+  const span = document.createElement('span');
+  span.textContent = msg;
+  const x = document.createElement('button');
+  x.className = 'pt-toast-x';
+  x.setAttribute('aria-label', 'Dismiss');
+  x.textContent = '×';
+  const kill = () => { el.classList.add('out'); setTimeout(() => el.remove(), 230); };
+  x.onclick = kill;
+  el.appendChild(span);
+  el.appendChild(x);
+  box.appendChild(el);
+  while (box.children.length > 4) box.firstChild.remove();
+  setTimeout(kill, 4500);
+}
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
