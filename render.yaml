@@ -1,0 +1,52 @@
+# Render blueprint: GitHub -> New Web Service -> this repo (or paste these values manually).
+# Native Python runtime, no Docker.
+services:
+  - type: web
+    name: playtopia-live-notifier
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false # Neon URL with ?ssl=require (Neon dashboard -> copy)
+      - key: APP_SECRET_KEY
+        generateValue: true
+      - key: CRON_SECRET
+        generateValue: true # cron-job.org sends it as ?secret= or X-Cron-Secret on /api/cron/poll
+      - key: SUPERADMIN_USER
+        value: superadmin
+      - key: SUPERADMIN_PASS
+        generateValue: true # copy it from the dashboard after first deploy, then log in
+      - key: DASHBOARD_WEBHOOK_URL
+        sync: false # or paste it in the dashboard Defaults tab instead
+      - key: PING_ROLE_ID
+        sync: false
+      - key: EMBED_IMAGE_URL
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: TIKTOK_SESSION_ID
+        sync: false # tiktok.com browser cookie "sessionid" — fewer flags, age-restricted lives
+      - key: TT_COOKIE_PROVIDER
+        value: "off" # headless minting needs Playwright browsers; off on Render
+      - key: TWITCH_CLIENT_ID
+        sync: false
+      - key: TWITCH_CLIENT_SECRET
+        sync: false
+      - key: KICK_CLIENT_ID
+        sync: false
+      - key: KICK_CLIENT_SECRET
+        sync: false
+      - key: YOUTUBE_API_KEY
+        sync: false # Data API v3 key, confirm-step only (never search.list)
+      - key: MAX_CREATORS
+        value: 60
+      - key: CHECK_INTERVAL_SECONDS
+        value: 75
+      - key: PER_CHECK_SLEEP_SECONDS
+        value: 1.0
+      - key: LOG_LEVEL
+        value: INFO
+      - key: RENDER
+        value: true

@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Login — PlaytopiaLive</title>
+<link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
+<link rel="stylesheet" href="/static/css/official.css?v=4">
+<link rel="stylesheet" href="/static/css/playtopia.css?v=5">
+</head>
+<body class="pt-body">
+<div class="pt-login-wrap">
+  <img src="/static/img/official-bg.webp" alt="" class="pt-login-bg">
+  <div class="pt-login-box">
+    <div class="pt-login-band">
+      <div>
+        <h1>Playtopia<span>Live</span></h1>
+        <div style="font-family:'Pixel Operator',monospace; font-size:10px; letter-spacing:.14em; color:var(--pt-muted)">PLAYTOPIA HUB</div>
+      </div>
+    </div>
+    <div class="pt-goldrule"></div>
+    <form id="loginForm" style="padding:20px 22px 22px; display:grid; gap:12px">
+      <p class="hint" style="margin:0">Sign in to manage live notifications</p>
+      <input id="username" placeholder="Username" autocomplete="username" required>
+      <input id="password" type="password" placeholder="Password" autocomplete="current-password" required>
+      <button class="btn btn-gold" style="width:100%">Sign in</button>
+    </form>
+  </div>
+</div>
+<script>
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const m = document.getElementById('msg');
+  const r = await fetch('/api/login', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({username: username.value, password: password.value})});
+  if (r.ok) { location.href = '/'; }
+  else {
+    let t = await r.text();
+    try { t = JSON.parse(t).detail || t; } catch {}
+    m.textContent = t; m.style.color = 'var(--pt-brick)';
+  }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,478 @@
+{% extends "base.html" %}
+{% block title %}PlaytopiaLive — Dashboard{% endblock %}
+
+{% block nav %}
+<button data-tab="creators" onclick="showTab('creators')" class="pt-nav__link active">Creators</button>
+<button data-tab="webhook" onclick="showTab('webhook')" class="pt-nav__link">Defaults</button>
+<button data-tab="admins" id="tabAdmins" onclick="showTab('admins')" class="pt-nav__link hidden">Admins</button>
+<button data-tab="audit" id="tabAudit" onclick="showTab('audit')" class="pt-nav__link hidden">Audit</button>
+{% endblock %}
+
+{% block userbox %}<span id="whoami"></span><button onclick="logout()" class="btn btn-ghost btn-xs">Logout</button>{% endblock %}
+
+{% block content %}
+<div class="world-shell pt-section">
+  <p class="pt-kicker">DASHBOARD</p>
+  <h2 class="pt-h2">CHOOSE WHAT TO MANAGE</h2>
+  <p class="pt-lead">Creators, global Discord defaults, admins and audit — same page, tabbed like the Tools hub.</p>
+
+  <!-- Creators (admin + superadmin) -->
+  <section id="tab-creators" style="margin-top:1.5rem">
+    <div class="grid2">
+      <div class="card">
+        <h2>Platform</h2>
+        <p class="hint" id="platformBlurb">Pick where you track.</p>
+        <select id="platformSelect" onchange="selectPlatform(this.value)">
+          <option value="tiktok">TikTok</option>
+          <option value="youtube">YouTube</option>
+          <option value="twitch">Twitch</option>
+          <option value="kick">Kick</option>
+        </select>
+      </div>
+      <div class="card">
+        <h2 id="addTitle">Add TikTok creator</h2>
+        <p class="hint" id="addHint">Paste a TikTok profile link or @username. Style it after adding.</p>
+        <form id="addForm" style="display:flex; gap:10px">
+          <input id="tiktokInput" placeholder="https://www.tiktok.com/@username or @username" required>
+          <button class="btn btn-gold">Add</button>
+        </form>
+        <div id="addMsg" class="msg"></div>
+      </div>
+    </div>
+    <div class="toolbar">
+      <button onclick="loadSubs()" class="btn btn-ghost btn-xs">Refresh</button>
+    </div>
+    <div id="list" class="creator-grid"></div>
+  </section>
+
+  <!-- Global defaults (admin + superadmin) -->
+  <section id="tab-webhook" class="hidden" style="margin-top:1.5rem">
+    <div class="card">
+      <h2>Global defaults</h2>
+      <p class="hint">Used for every creator unless that creator overrides it. Channel: Discord &rarr; Integrations &rarr; Webhooks &rarr; Copy URL.</p>
+      <div style="display:grid; gap:12px">
+        <input id="webhook" placeholder="https://discord.com/api/webhooks/...">
+        <div class="grid2">
+          <input id="role" placeholder="Role ID to ping (optional)">
+          <textarea id="message" rows="2">{ping_role}
+{account} is LIVE!</textarea>
+        </div>
+        <label style="font-size:12px; display:flex; align-items:center; gap:8px; color:var(--pt-muted)">
+          <input id="pingEveryone" type="checkbox" checked> Ping @everyone (like NotifyMe)
+        </label>
+        <div class="grid2" style="align-items:end">
+          <div>
+            <label class="mini">Default image (public https:// URL)</label>
+            <input id="defImage" placeholder="https://... (fallback photo)">
+          </div>
+          <div>
+            <label class="mini">Default color</label>
+            <div style="display:flex; gap:8px; align-items:center">
+              <input id="defColor" type="color" value="#FF0050">
+              <span id="defColorHex" style="font-size:12px; font-family:monospace">#FF0050</span>
+            </div>
+          </div>
+        </div>
+        <p class="hint" style="margin:0">Tags: <code>{account}</code> <code>{link}</code> <code>{ping_role}</code></p>
+        <div><button onclick="saveSettings()" class="btn btn-gold">Save defaults</button></div>
+        <div id="settingsMsg" class="msg"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Change my password</h2>
+      <form id="pwForm" style="display:grid; gap:10px">
+        <input id="pwCurrent" type="password" placeholder="Current password (admins only)">
+        <input id="pwNew" type="password" placeholder="New password (min 8 chars)" required minlength="8">
+        <div><button class="btn btn-ghost btn-xs">Update password</button></div>
+      </form>
+      <div id="pwMsg" class="msg"></div>
+    </div>
+  </section>
+
+  <!-- Admins (superadmin only) -->
+  <section id="tab-admins" class="hidden" style="margin-top:1.5rem">
+    <div class="card">
+      <h2>Add admin</h2>
+      <form id="adminForm" class="grid2">
+        <input id="adminUser" placeholder="username" required>
+        <input id="adminPass" type="password" placeholder="password (min 8)" required minlength="8">
+        <select id="adminRole">
+          <option value="admin">admin — creators + defaults</option>
+          <option value="superadmin">superadmin — full access</option>
+        </select>
+        <div><button class="btn btn-gold btn-xs">Create</button></div>
+      </form>
+      <div id="adminMsg" class="msg"></div>
+    </div>
+    <div id="adminList" class="admin-grid"></div>
+  </section>
+
+  <!-- Audit (superadmin only) -->
+  <section id="tab-audit" class="hidden" style="margin-top:1.5rem">
+    <div class="toolbar">
+      <button onclick="loadAudit()" class="btn btn-ghost btn-xs">Refresh</button>
+    </div>
+    <div id="auditList" style="display:grid; gap:6px"></div>
+  </section>
+</div>
+
+<div id="modalOverlay" class="modal-overlay hidden">
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h3 id="modalTitle"></h3>
+      <button class="modal-x" onclick="closeModal()" aria-label="Close">&times;</button>
+    </div>
+    <div id="modalBody" class="modal-body"></div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let ME = null;
+async function api(path, opts={}) {
+  const r = await fetch(path, opts);
+  if (r.status === 401) { location.href = '/login'; throw new Error('login'); }
+  return r;
+}
+function showTab(name) {
+  ['creators','webhook','admins','audit'].forEach(t => {
+    document.getElementById('tab-'+t).classList.toggle('hidden', t !== name);
+    const btn = document.querySelector(`[data-tab="${t}"]`);
+    if (btn) btn.classList.toggle('active', t === name);
+  });
+  if (name === 'audit') loadAudit();
+  if (name === 'admins') loadAdmins();
+}
+async function boot() {
+  const r = await api('/api/me');
+  ME = await r.json();
+  document.getElementById('whoami').textContent = ME.username + ' (' + ME.role + ')';
+  if (ME.role === 'superadmin') {
+    document.getElementById('tabAdmins').classList.remove('hidden');
+    document.getElementById('tabAudit').classList.remove('hidden');
+  }
+  selectPlatform(PLATFORM);
+  loadSettings(); loadSubs();
+}
+async function logout() { await fetch('/api/logout', {method:'POST'}); location.href = '/login'; }
+function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmtTime(iso){ if(!iso) return 'never'; const d = new Date(iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z'); return isNaN(d) ? iso.slice(0,16).replace('T',' ') : d.toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}); }
+
+// --- creators + platform filter ---
+const PLATFORMS = {
+  tiktok: { label: 'TikTok', badge: '#FF0050', title: 'Add TikTok creator',
+    hint: 'Paste a TikTok profile link or @username. Style it after adding.',
+    placeholder: 'https://www.tiktok.com/@username or @username' },
+  youtube: { label: 'YouTube', badge: '#FF0000', title: 'Add YouTube creator',
+    hint: 'Paste a YouTube channel link or @handle. Checked every sweep, like TikTok.',
+    placeholder: 'https://www.youtube.com/@handle or @handle' },
+  twitch: { label: 'Twitch', badge: '#9146FF', title: 'Add Twitch creator',
+    hint: 'Paste a Twitch channel link or username. Live-checks land later — stored and styled now.',
+    placeholder: 'https://www.twitch.tv/username or username' },
+  kick: { label: 'Kick', badge: '#53FC18', title: 'Add Kick creator',
+    hint: 'Paste a Kick channel link or username. Needs the Kick API keys in .env, then checked every sweep.',
+    placeholder: 'https://kick.com/username or username' },
+};
+let PLATFORM = localStorage.getItem('pt_platform') || 'tiktok';
+if (!PLATFORMS[PLATFORM]) PLATFORM = 'tiktok';
+let ALL_SUBS = [];
+// Which platforms the backend actually live-checks (from /api/settings).
+let LIVE_CHECKS = {tiktok: true, youtube: true, kick: false, twitch: false};
+function liveBlurb() {
+  const live = Object.keys(PLATFORMS).filter(p => LIVE_CHECKS[p]).map(p => PLATFORMS[p].label);
+  const rest = Object.keys(PLATFORMS).filter(p => !LIVE_CHECKS[p]).map(p => PLATFORMS[p].label);
+  let t = live.length ? live.join(', ') + ' live-check every sweep' : 'No live-checks configured yet';
+  if (rest.length) t += ' — ' + rest.join(' + ') + ' stored here until ready';
+  return t + '.';
+}
+function refreshBlurb() {
+  const el = document.getElementById('platformBlurb');
+  if (el) el.textContent = 'Pick where you track. ' + liveBlurb();
+}
+
+function platOf(s) { return (s.platform || 'tiktok').toLowerCase(); }
+function platBadge(p) {
+  const b = (PLATFORMS[p] || PLATFORMS.tiktok).badge;
+  const ink = p === 'kick' ? '#0a2024' : '#fff';
+  return `<span class="pill" style="background:${b}; color:${ink}">${(PLATFORMS[p] || PLATFORMS.tiktok).label}</span>`;
+}
+function dispHandle(s) {
+  // Raw YouTube channel IDs have no @handle — show a generic label instead.
+  if (platOf(s) === 'youtube' && /^UC[\w-]{22}$/.test(s.tiktok_username)) return 'this channel';
+  return '@' + s.tiktok_username;
+}
+function selectPlatform(p) {
+  if (!PLATFORMS[p]) p = 'tiktok';
+  PLATFORM = p;
+  try { localStorage.setItem('pt_platform', p); } catch {}
+  document.getElementById('platformSelect').value = p;
+  document.getElementById('addTitle').textContent = PLATFORMS[p].title;
+  document.getElementById('addHint').textContent = PLATFORMS[p].hint;
+  document.getElementById('tiktokInput').placeholder = PLATFORMS[p].placeholder;
+  refreshBlurb();
+  renderSubs();
+}
+async function loadSubs() {
+  const r = await api('/api/subscriptions');
+  ALL_SUBS = await r.json();
+  // Counts per platform in the filter dropdown.
+  const counts = {};
+  ALL_SUBS.forEach(s => { const p = platOf(s); counts[p] = (counts[p] || 0) + 1; });
+  Object.keys(PLATFORMS).forEach(p => {
+    const opt = document.querySelector(`#platformSelect option[value="${p}"]`);
+    if (opt) opt.textContent = `${PLATFORMS[p].label}${counts[p] ? ` (${counts[p]})` : ''}`;
+  });
+  renderSubs();
+}
+function renderSubs() {
+  const el = document.getElementById('list');
+  const rows = ALL_SUBS.filter(s => platOf(s) === PLATFORM);
+  const label = PLATFORMS[PLATFORM].label;
+  if (!rows.length) el.innerHTML = `<div class="card"><p class="hint" style="margin:0">No ${label} creators yet. Add one above.</p></div>`;
+  else el.innerHTML = rows.map((s, i) => {
+    const num = String(i + 1).padStart(2, '0');
+    const dot = s.color ? `<span class="dot" style="background:${s.color}" title="${s.color}"></span>` : '';
+    const cover = s.image_url
+      ? `<img src="${s.image_url}" class="thumb" alt="" loading="lazy">`
+      : `<div class="thumb-missing">?</div>`;
+    const disp = dispHandle(s);
+    const soon = LIVE_CHECKS[platOf(s)] ? '' : `<span><b>polling:</b> soon</span>`;
+    return `
+    <div class="creator ${s.is_live?'live':''}">
+      <div class="creator__cover">
+        ${cover}
+        <span class="creator__num">${num}</span>
+        <span class="creator__status">${platBadge(platOf(s))} ${s.is_live?'<span class="pill pill-live">LIVE</span>':'<span class="pill pill-off">offline</span>'}</span>
+      </div>
+      <div class="creator__body">
+        <h3 class="cname">${escapeHtml(s.author_name || disp)} ${dot}</h3>
+        <div class="cuser">${escapeHtml(disp)}</div>
+        <div class="csub">&ldquo;${escapeHtml(s.link_text_preview)}&rdquo;</div>
+        <div class="creator__meta">
+          <span><b>check:</b> ${fmtTime(s.last_checked_at)}</span>
+          <span><b>live:</b> ${fmtTime(s.last_notified_at)}</span>
+          ${soon}
+        </div>
+        <div class="creator__actions">
+          <button onclick="openEdit(${s.id})" class="btn btn-ghost btn-xs">Edit</button>
+          <button onclick="previewSub(${s.id})" class="btn btn-ghost btn-xs">Preview</button>
+          <button onclick="delSub(${s.id})" class="btn btn-danger btn-xs">Remove</button>
+          <button onclick="testSub(${s.id})" class="btn btn-ghost btn-xs">Test</button>
+          <button onclick="forceSub(${s.id})" class="btn btn-gold btn-xs" style="grid-column:1/-1">Force notification</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+// --- modal framework ---
+let EDITING_ID = null;
+function openModal(title, bodyHtml) {
+  document.getElementById('modalTitle').textContent = title;
+  document.getElementById('modalBody').innerHTML = bodyHtml;
+  document.getElementById('modalOverlay').classList.remove('hidden');
+}
+function closeModal() {
+  document.getElementById('modalOverlay').classList.add('hidden');
+  document.getElementById('modalBody').innerHTML = '';
+  EDITING_ID = null;
+}
+const _overlay = document.getElementById('modalOverlay');
+if (_overlay) _overlay.addEventListener('click', (e) => {
+  if (e.target.id === 'modalOverlay') closeModal();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !document.getElementById('modalOverlay').classList.contains('hidden')) closeModal();
+});
+
+// --- edit creator (modal) ---
+function openEdit(id) {
+  const s = ALL_SUBS.find(x => x.id === id);
+  if (!s) return;
+  EDITING_ID = id;
+  const disp = dispHandle(s);
+  openModal('Edit creator', `
+    <div class="grid2">
+      <div><label class="mini">Header name (blank = ${escapeHtml(disp)})</label>
+      <input id="m_author" value="${escapeHtml(s.author_name||'')}"></div>
+      <div><label class="mini">Link text (blank = Watch ${escapeHtml(disp)}'s LIVE!)</label>
+      <input id="m_linktext" value="${escapeHtml(s.link_text||'')}"></div>
+    </div>
+    <div><label class="mini">Message override (blank = global; tags: {account} {link} {ping_role})</label>
+    <input id="m_msg" value="${escapeHtml(s.message||'')}"></div>
+    <div class="grid2" style="align-items:end">
+      <div><label class="mini">Photo (blank = global default)</label>
+      <input id="m_img" placeholder="https://" value="${escapeHtml(s.image_url||'')}"></div>
+      <div><label class="mini">Color</label>
+        <div style="display:flex; gap:8px; align-items:center">
+          <input id="m_color" type="color" value="${s.color||'#FF0050'}">
+          <span id="m_colorhex" style="font-size:12px; font-family:monospace">${(s.color||'global').toUpperCase()}</span>
+          <label style="font-size:12px; color:var(--pt-muted); display:flex; align-items:center; gap:4px"><input id="m_useglobal" type="checkbox" ${s.color?'':'checked'}> global</label>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex; gap:10px; align-items:center">
+      <button onclick="saveEdit()" class="btn btn-gold btn-xs">Save</button>
+      <span id="m_msg2" class="msg" style="margin:0"></span>
+    </div>`);
+  document.getElementById('m_color').addEventListener('input', e => {
+    document.getElementById('m_colorhex').textContent = e.target.value.toUpperCase();
+  });
+}
+async function saveEdit() {
+  if (!EDITING_ID) return;
+  const cleared = document.getElementById('m_useglobal').checked;
+  const body = {
+    author_name: document.getElementById('m_author').value || null,
+    message: document.getElementById('m_msg').value || null,
+    link_text: document.getElementById('m_linktext').value || null,
+    image_url: document.getElementById('m_img').value || null,
+    color: cleared ? null : document.getElementById('m_color').value,
+  };
+  const r = await api('/api/subscriptions/'+EDITING_ID+'/style',{method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  const m = document.getElementById('m_msg2');
+  m.textContent = r.ok ? (await r.json()).msg : await r.text();
+  m.className = r.ok ? 'msg msg-ok' : 'msg msg-err';
+  if (r.ok) { closeModal(); loadSubs(); }
+}
+
+// --- discord preview (modal) ---
+function discordHex(colorInt) {
+  return '#' + (Number(colorInt) >>> 0).toString(16).padStart(6, '0');
+}
+async function previewSub(id) {
+  const r = await api('/api/subscriptions/'+id+'/payload');
+  if (!r.ok) { alert(await r.text()); return; }
+  const p = await r.json();
+  const emb = (p.embeds || [])[0] || {};
+  const btns = (((p.components || [])[0] || {}).components || []);
+  const desc = String(emb.description || '');
+  const dm = desc.match(/^\[(.*?)\]\((.*?)\)$/s);
+  const descHtml = dm
+    ? `<a href="${escapeHtml(dm[2])}" target="_blank">${escapeHtml(dm[1])}</a>`
+    : escapeHtml(desc);
+  const img = (emb.image || {}).url
+    ? `<img src="${escapeHtml(emb.image.url)}" class="discord-embed__img">` : '';
+  const footer = emb.footer ? escapeHtml(emb.footer.text || '') : '';
+  const ts = emb.timestamp ? ` &bull; ${fmtTime(emb.timestamp)}` : '';
+  openModal('Discord preview', `
+    <div class="discord-msg">
+      ${p.content ? `<div class="discord-content">${escapeHtml(p.content)}</div>` : ''}
+      <div class="discord-embed">
+        <div class="discord-embed__bar" style="background:${discordHex(emb.color)}"></div>
+        <div class="discord-embed__main">
+          ${emb.author ? `<div class="discord-embed__author">${escapeHtml(emb.author.name || '')}</div>` : ''}
+          <div class="discord-embed__desc">${descHtml}</div>
+          ${img}
+          ${(footer || ts) ? `<div class="discord-embed__footer">${footer}${ts}</div>` : ''}
+        </div>
+      </div>
+      ${btns.length ? `<div class="discord-btns">${btns.map(b => `<a class="discord-btn" href="${escapeHtml(b.url || '#')}" target="_blank">${escapeHtml(b.label || 'Open')}</a>`).join('')}</div>` : ''}
+    </div>
+    <details class="discord-raw">
+      <summary>Raw JSON payload</summary>
+      <pre>${escapeHtml(JSON.stringify(p, null, 2))}</pre>
+    </details>
+    <div><button onclick="closeModal()" class="btn btn-ghost btn-xs">Close</button></div>`);
+}
+
+// --- force notification ---
+async function forceSub(id) {
+  if (!confirm('Send the live notification now, even if this creator looks offline?')) return;
+  const r = await api('/api/subscriptions/'+id+'/force-notify', {method:'POST'});
+  alert(r.ok ? (await r.json()).msg : await r.text());
+}
+async function testSub(id){ const r = await api('/api/subscriptions/'+id+'/test',{method:'POST'}); alert(r.ok?'Test sent! Check Discord.':await r.text()); }
+async function delSub(id){ if(!confirm('Remove this creator?'))return; const r = await api('/api/subscriptions/'+id,{method:'DELETE'}); if(r.ok) loadSubs(); else alert(await r.text()); }
+document.getElementById('addForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const r = await api('/api/subscriptions',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({platform: PLATFORM, creator_input: tiktokInput.value})});
+  const m = document.getElementById('addMsg');
+  m.textContent = r.ok ? (await r.json()).msg : await r.text();
+  m.className = r.ok ? 'msg msg-ok' : 'msg msg-err';
+  if (r.ok) { tiktokInput.value=''; loadSubs(); }
+});
+
+// --- global defaults ---
+document.getElementById('defColor').addEventListener('input', e => {
+  document.getElementById('defColorHex').textContent = e.target.value.toUpperCase();
+});
+async function loadSettings() {
+  const r = await api('/api/settings');
+  const s = await r.json();
+  if (s.live_checks) {
+    LIVE_CHECKS = Object.assign({}, LIVE_CHECKS, s.live_checks);
+    refreshBlurb();
+    renderSubs();
+  }
+  if (s.webhook_configured) {
+    webhook.value = s.raw_webhook_url || '';
+    role.value = s.ping_role_id || '';
+    message.value = s.custom_message || '{ping_role}\n{account} is LIVE!';
+    pingEveryone.checked = !!s.ping_everyone;
+    defImage.value = s.embed_image_url || '';
+    defColor.value = (s.embed_color || '#FF0050').toLowerCase();
+    defColorHex.textContent = (s.embed_color || '#FF0050').toUpperCase();
+    settingsMsg.textContent = 'Configured: ' + s.webhook_url_masked;
+    settingsMsg.className = 'msg msg-ok';
+  }
+}
+async function saveSettings() {
+  const body = {webhook_url: webhook.value, ping_role_id: role.value || null, ping_everyone: pingEveryone.checked,
+    custom_message: message.value, embed_image_url: defImage.value || null, embed_color: defColor.value};
+  const r = await api('/api/settings',{method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  settingsMsg.textContent = r.ok ? 'Saved!' : await r.text();
+  settingsMsg.className = r.ok ? 'msg msg-ok' : 'msg msg-err';
+  if (r.ok) loadSubs();
+}
+document.getElementById('pwForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const r = await api('/api/me/password',{method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({current_password: pwCurrent.value || null, new_password: pwNew.value})});
+  pwMsg.textContent = r.ok ? 'Password updated!' : await r.text();
+  pwMsg.className = r.ok ? 'msg msg-ok' : 'msg msg-err';
+  if (r.ok) { pwCurrent.value=''; pwNew.value=''; }
+});
+
+// --- admins (superadmin) ---
+async function loadAdmins() {
+  const r = await api('/api/admins');
+  if (!r.ok) return;
+  const data = await r.json();
+  document.getElementById('adminList').innerHTML = data.map(u => `
+    <div class="admin-card"><div class="rowline">
+      <div class="grow"><span class="cname">${u.username}</span>
+        <span class="pill ${u.role==='superadmin'?'pill-role':'pill-off'}">${u.role}</span>
+        ${u.is_active?'':'<span class="pill" style="background:var(--pt-brick)">disabled</span>'}</div>
+      <button onclick="toggleAdmin(${u.id})" class="btn btn-ghost btn-xs">${u.is_active?'Disable':'Enable'}</button>
+      <button onclick="delAdmin(${u.id})" class="btn btn-danger btn-xs">Delete</button>
+    </div></div>`).join('');
+}
+document.getElementById('adminForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const r = await api('/api/admins',{method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({username: adminUser.value, password: adminPass.value, role: adminRole.value})});
+  adminMsg.textContent = r.ok ? (await r.json()).msg : await r.text();
+  adminMsg.className = r.ok ? 'msg msg-ok' : 'msg msg-err';
+  if (r.ok) { adminUser.value=''; adminPass.value=''; loadAdmins(); }
+});
+async function toggleAdmin(id){ const r = await api('/api/admins/'+id+'/toggle',{method:'POST'}); if(r.ok) loadAdmins(); else alert(await r.text()); }
+async function delAdmin(id){ if(!confirm('Delete this account?'))return; const r = await api('/api/admins/'+id,{method:'DELETE'}); if(r.ok) loadAdmins(); else alert(await r.text()); }
+
+// --- audit (superadmin) ---
+async function loadAudit() {
+  const r = await api('/api/audit?limit=100');
+  if (!r.ok) return;
+  const data = await r.json();
+  document.getElementById('auditList').innerHTML = data.length ? data.map(a => `
+    <div class="auditrow">
+      <span class="t">${fmtTime(a.created_at)}</span>
+      <span class="a">${a.actor}</span>
+      <span class="c">${a.action}</span>
+      <span class="d">${a.detail||''}</span>
+    </div>`).join('') : '<div class="card"><p class="hint" style="margin:0">No audit entries yet.</p></div>';
+}
+boot();
+</script>
+{% endblock %}

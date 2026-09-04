@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+.env
+.env.local
+*.db
+*.sqlite
+.tt_cookies.json
+alembic/__pycache__/
+staticfiles/
+.DS_Store

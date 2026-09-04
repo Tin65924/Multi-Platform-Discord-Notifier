@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}PlaytopiaLive{% endblock %}</title>
+<link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
+<link rel="stylesheet" href="/static/css/official.css?v=4">
+<link rel="stylesheet" href="/static/css/playtopia.css?v=5">
+{% block head %}{% endblock %}
+</head>
+<body class="pt-body">
+<header class="pt-header">
+  <div class="world-shell pt-header__inner">
+    <nav class="pt-nav" style="margin-left:0">
+      {% block nav %}{% endblock %}
+    </nav>
+    <div class="pt-userbox">{% block userbox %}{% endblock %}</div>
+  </div>
+</header>
+
+<main class="pt-main">
+{% block hero %}{% endblock %}
+{% block content %}{% endblock %}
+</main>
+
+<footer class="pt-footer">
+  <div class="world-shell pt-footer__inner">
+    <span class="pt-footer__title">PLAYTOPIA TOOLS — DATA COMMUNITY-SOURCED</span>
+    <span class="pt-footer__sub">Built for Playtopia - TINNN &bull; Live notifier</span>
+  </div>
+</footer>
+{% block scripts %}{% endblock %}
+</body>
+</html>
