@@ -321,6 +321,34 @@ async def test_webhook(sub_id: int, session: AsyncSession = Depends(get_session)
     return {"msg": "Test sent — check Discord"}
 
 
+@router.post("/send-custom")
+async def send_custom(request: Request, session: AsyncSession = Depends(get_session), user=Depends(require_superadmin)):
+    """Superadmin broadcast box: send free text to the channel as a test."""
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(400, "Invalid JSON body")
+    content = str(data.get("content") or "").strip()
+    if not content:
+        raise HTTPException(400, "Message is empty")
+    if len(content) > 2000:
+        raise HTTPException(400, "Message too long (2000 chars max)")
+    gs = await session.get(GlobalSettings, 1)
+    webhook_url = _webhook_cfg(gs)[0]
+    if not webhook_url:
+        raise HTTPException(400, "Configure webhook first (Defaults tab)")
+    payload = {
+        "username": "Playtopia LIVE",
+        "content": content,
+        "allowed_mentions": {"parse": ["everyone", "roles", "users"]},
+    }
+    ok = await send_webhook(webhook_url, payload, timeout=settings.WEBHOOK_TIMEOUT_SECONDS)
+    if not ok:
+        raise HTTPException(502, "Webhook failed - check URL/permissions (see logs)")
+    await log_audit(user["username"], "custom.send", content[:200])
+    return {"msg": "Sent — check Discord"}
+
+
 @router.post("/subscriptions/{sub_id}/force-notify")
 async def force_notify(sub_id: int, session: AsyncSession = Depends(get_session), user=Depends(require_admin)):
     """Send the live notification right now, even if the creator looks offline.
