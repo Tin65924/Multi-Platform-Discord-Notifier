@@ -56,8 +56,7 @@
           <input id="webhook" placeholder="https://discord.com/api/webhooks/...">
           <div class="grid2">
             <input id="role" placeholder="Role ID to ping (optional)">
-            <textarea id="message" rows="2">{ping_role}
-{discord} is LIVE!!!</textarea>
+            <textarea id="message" rows="2">{discord} is LIVE!</textarea>
           </div>
           <label style="font-size:12px; display:flex; align-items:center; gap:8px; color:var(--pt-muted)">
             <input id="pingEveryone" type="checkbox" checked> Ping @everyone
@@ -75,7 +74,7 @@
               </div>
             </div>
           </div>
-          <p class="hint" style="margin:0">Tags: <code>{account}</code> <code>{link}</code> <code>{ping_role}</code></p>
+          <p class="hint" style="margin:0">Tags: <code>{account}</code> <code>{discord}</code> <code>{link}</code> — add <code>{ping_role}</code> anywhere to ping a role</p>
           <div><button onclick="saveSettings()" class="btn btn-gold">Save defaults</button></div>
           <div id="settingsMsg" class="msg"></div>
         </div>
@@ -190,7 +189,7 @@ async function boot() {
     document.getElementById('tabSend').classList.remove('hidden');
   }
   selectPlatform(PLATFORM);
-  loadSettings(); loadSubs();
+  loadSettings(); loadSubs(); loadWildLines();
 }
 async function logout() { await fetch('/api/logout', {method:'POST'}); location.href = '/login'; }
 async function sendCustom() {
@@ -297,7 +296,6 @@ function renderSubs() {
       <div class="creator__body">
         <h3 class="cname">${escapeHtml(s.author_name || disp)} ${dot}</h3>
         <div class="cuser">${escapeHtml(disp)}</div>
-        <div class="csub">&ldquo;${escapeHtml(s.link_text_preview)}&rdquo;</div>
         <div class="creator__meta">
           <span><b>check:</b> ${fmtTime(s.last_checked_at)}</span>
           <span><b>live:</b> ${fmtTime(s.last_notified_at)}</span>
@@ -341,12 +339,6 @@ document.addEventListener('keydown', (e) => {
 // --- edit creator (modal) ---
 const USER_LABELS = {tiktok: 'TikTok Username', youtube: 'YouTube Handle', twitch: 'Twitch Username', kick: 'Kick Username'};
 function userLabel(p) { return USER_LABELS[p] || USER_LABELS.tiktok; }
-function renderLinkHint() {
-  const v = (document.getElementById('m_author').value || '').trim().replace(/^@/, '');
-  const s = subById(EDITING_ID);
-  const bare = s ? dispHandle(s).replace(/^@/, '') : 'username';
-  document.getElementById('m_linkhint').textContent = `Link will read: "Watch ${v || bare}'s LIVE!"`;
-}
 function openEdit(id) {
   const s = ALL_SUBS.find(x => x.id === id);
   if (!s) return;
@@ -357,8 +349,7 @@ function openEdit(id) {
     <div style="font-size:15px">${escapeHtml(disp)}</div></div>
     <div class="grid2">
       <div><label class="mini">Creator Name</label>
-      <input id="m_author" value="${escapeHtml(s.author_name||'')}">
-      <div id="m_linkhint" class="hint" style="margin:4px 0 0"></div></div>
+      <input id="m_author" value="${escapeHtml(s.author_name||'')}"></div>
       <div><label class="mini">Discord Username</label>
       <input id="m_discord" placeholder="josh" value="${escapeHtml(s.discord_username ? '@'+s.discord_username : '')}"></div>
     </div>
@@ -382,8 +373,6 @@ function openEdit(id) {
   document.getElementById('m_color').addEventListener('input', e => {
     document.getElementById('m_colorhex').textContent = e.target.value.toUpperCase();
   });
-  document.getElementById('m_author').addEventListener('input', renderLinkHint);
-  renderLinkHint();
 }
 async function saveEdit() {
   if (!EDITING_ID) return;
@@ -478,6 +467,18 @@ document.getElementById('addForm').addEventListener('submit', async (e) => {
 // --- global defaults ---
 // Live preview: mirrors build_embed() in app/webhook.py with a sample creator,
 // so the right-hand panel updates as the inputs change. Unsaved edits show too.
+let WILD_LINES = null;
+async function loadWildLines() {
+  try {
+    const r = await api('/api/wildlines');
+    if (r.ok) WILD_LINES = await r.json();
+  } catch {}
+  renderDefaultsPreview();
+}
+function wildPreview(name) {
+  if (!WILD_LINES || !WILD_LINES.length) return name + ' is LIVE in the Wild!';
+  return WILD_LINES[Math.floor(Math.random() * WILD_LINES.length)].split('NAME').join(name);
+}
 function renderDefaultsPreview() {
   const box = document.getElementById('defaultsPreview');
   if (!box) return;
@@ -485,15 +486,13 @@ function renderDefaultsPreview() {
   const account = '@' + sample;
   const link = 'https://www.tiktok.com/@' + sample + '/live';
   const profile = 'https://www.tiktok.com/@' + sample;
-  const tpl = document.getElementById('message').value || '{ping_role}\n{discord} is LIVE!!!';
+  const tpl = document.getElementById('message').value || '{discord} is LIVE!';
   const everyone = document.getElementById('pingEveryone').checked;
   const roleId = document.getElementById('role').value.trim();
   const ping = everyone ? '@everyone' : (roleId ? '<@&' + roleId + '>' : '');
   let content = tpl.split('{discord}').join(account).split('{account}').join(account)
     .split('{link}').join(link).split('{ping_role}').join(ping);
-  if (ping && !tpl.includes('{ping_role}') && !content.includes(ping)) content = (ping + '\n' + content).trim();
-  content = content.trim().slice(0, 2000);
-  const label = "Watch samplecreator's LIVE!";
+  content = content.trim().slice(0, 2000) || (account + ' is LIVE!');
   let color = (document.getElementById('defColor').value || '#FF0050').toUpperCase();
   if (!/^#[0-9A-F]{6}$/.test(color)) color = '#FF0050';
   const imgUrl = document.getElementById('defImage').value.trim();
@@ -504,9 +503,9 @@ function renderDefaultsPreview() {
         <div class="discord-embed__bar" style="background:${color}"></div>
         <div class="discord-embed__main">
           <div class="discord-embed__author">${escapeHtml(account)}</div>
-          <div class="discord-embed__desc"><a href="${escapeHtml(link)}" target="_blank">${escapeHtml(label)}</a></div>
+          <div class="discord-embed__desc">${escapeHtml(wildPreview(sample))}</div>
           ${imgUrl ? `<img src="${escapeHtml(imgUrl)}" class="discord-embed__img" onerror="this.remove()">` : ''}
-          <div class="discord-embed__footer">Playtopia LIVE &bull; TikTok</div>
+          <div class="discord-embed__footer">Forest Watcher &bull; TikTok</div>
         </div>
       </div>
       <div class="discord-btns">
@@ -534,7 +533,7 @@ async function loadSettings() {
   if (s.webhook_configured) {
     webhook.value = s.raw_webhook_url || '';
     role.value = s.ping_role_id || '';
-    message.value = s.custom_message || '{ping_role}\n{discord} is LIVE!!!';
+    message.value = s.custom_message || '{discord} is LIVE!';
     pingEveryone.checked = !!s.ping_everyone;
     defImage.value = s.embed_image_url || '';
     defColor.value = (s.embed_color || '#FF0050').toLowerCase();

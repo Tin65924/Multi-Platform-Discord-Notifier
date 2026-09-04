@@ -9,7 +9,7 @@ from .config import get_settings
 from .db import async_session
 from .models import Subscription, GlobalSettings
 from .tiktok import checker
-from .webhook import build_embed, creator_link_text, display_account, send_webhook
+from .webhook import build_embed, display_account, send_webhook
 from .kick import checker as kick_checker
 from .youtube import checker as youtube_checker
 
@@ -92,7 +92,6 @@ async def poll_once():
                     message=custom_message,
                     ping_role_id=ping_role_id,
                     ping_everyone=ping_everyone,
-                    link_text=creator_link_text(sub.author_name, username, sub.platform or "tiktok"),
                     image_url=sub.image_url or embed_image_url,
                     color=sub.color or embed_color,
                     author_name=sub.author_name,
@@ -185,7 +184,6 @@ async def poll_youtube():
                     message=custom_message,
                     ping_role_id=ping_role_id,
                     ping_everyone=ping_everyone,
-                    link_text=creator_link_text(sub.author_name, handle, sub.platform or "tiktok"),
                     image_url=sub.image_url or embed_image_url,
                     color=sub.color or embed_color,
                     author_name=sub.author_name,
@@ -284,7 +282,6 @@ async def poll_kick():
                     message=custom_message,
                     ping_role_id=ping_role_id,
                     ping_everyone=ping_everyone,
-                    link_text=creator_link_text(sub.author_name, handle, sub.platform or "tiktok"),
                     image_url=sub.image_url or embed_image_url,
                     color=sub.color or embed_color,
                     author_name=sub.author_name,

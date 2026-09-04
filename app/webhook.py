@@ -63,20 +63,7 @@ def resolve_color(value: str | None) -> tuple[str, int]:
     return raw.upper() if len(raw) == 7 else HARDCODED_COLOR, parse_color(raw)
 
 
-def default_link_text(username: str, platform: str = "tiktok") -> str:
-    # No @ by request: "Watch josh_xxii7's LIVE!" (display_account adds @).
-    return f"Watch {display_account(platform, username).lstrip('@')}'s LIVE!"
-
-
-def creator_link_text(author_name: str | None, username: str, platform: str | None = "tiktok") -> str:
-    """Link line always derives from Creator Name: Watch {name}'s LIVE!
-
-    Falls back to the handle-based default when no Creator Name is set.
-    """
-    name = (author_name or "").strip().lstrip("@")
-    if name:
-        return f"Watch {name}'s LIVE!"
-    return default_link_text(username, platform or "tiktok")
+from .wildlines import random_wild_line
 
 
 def discord_mention(discord_user_id: str | None, discord_username: str | None, account: str) -> str:
@@ -160,7 +147,6 @@ def build_embed(
     message: str | None = None,
     ping_role_id: str | None = None,
     ping_everyone: bool = True,
-    link_text: str | None = None,
     image_url: str | None = None,
     color: str | None = None,
     author_name: str | None = None,
@@ -170,32 +156,31 @@ def build_embed(
 ) -> dict:
     """
     Fully owned embed — nothing fetched from any platform.
-      content: message template ("@everyone\\n<@user-id> is LIVE!")
-      embed:   author header, clickable link line, big image, color bar,
-               Watch Stream / Profile buttons.
+      content: message template ("<@user-id> is LIVE!")
+      embed:   handle header, one randomized forest line, big image,
+               color bar, Watch Stream / Profile buttons.
     Template tags: {account} {discord} {link} {ping_role}
       {account} = platform handle (@user); {discord} = real <@id> mention
       when discord_user_id is set, else @username text, else {account}.
-    Markdown (e.g. **bold**) passes through untouched — Discord renders it.
+      {ping_role} is opt-in: only fires when present in the template
+      (no automatic prefixing).
     """
     link = platform_live_url(platform, username)
     profile_link = platform_profile_url(platform, username)
     account = display_account(platform, username)
-    author = (author_name or "").strip() or account
-    label = (link_text or "").strip() or default_link_text(username, platform)
     discord = discord_mention(discord_user_id, discord_username, account)
+    wild_name = (author_name or "").strip().lstrip("@") or account.lstrip("@")
 
     ping_mention = _ping_mention(ping_everyone, ping_role_id)
     content = (
-        (message or "{ping_role}\n{discord} is LIVE!!!")
+        (message or "{discord} is LIVE!")
         .replace("{discord}", discord)
         .replace("{account}", account)
         .replace("{link}", link)
         .replace("{ping_role}", ping_mention)
-    )
-    if ping_mention and "{ping_role}" not in (message or "") and ping_mention not in content:
-        content = f"{ping_mention}\n{content}".strip()
-    content = content.strip()[:2000]
+    ).strip()[:2000]
+    if not content:
+        content = f"{discord} is LIVE!"
 
     image = resolve_image(
         image_url,
@@ -203,18 +188,18 @@ def build_embed(
         public_base=getattr(_settings, "PUBLIC_BASE_URL", "") or "",
     )
     embed: dict = {
-        "author": {"name": author},
-        "description": f"[{label}]({link})",
+        "author": {"name": account},
+        "description": random_wild_line(wild_name),
         "color": parse_color(color),
         "url": link,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "footer": {"text": f"Playtopia LIVE • {platform_label(platform)}"},
+        "footer": {"text": f"Forest Watcher • {platform_label(platform)}"},
     }
     if image:
         embed["image"] = {"url": image}
 
     payload: dict = {
-        "username": "Playtopia LIVE",
+        "username": "Forest Watcher",
         "embeds": [embed],
         "components": [
             {

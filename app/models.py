@@ -42,7 +42,7 @@ class GlobalSettings(Base):
     webhook_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     ping_role_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     ping_everyone: Mapped[bool] = mapped_column(Boolean, default=True)
-    custom_message: Mapped[str] = mapped_column(Text, default="{ping_role}\n{discord} is LIVE!!!")
+    custom_message: Mapped[str] = mapped_column(Text, default="{discord} is LIVE!")
     # Global defaults used when a creator leaves their own field empty
     embed_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     embed_color: Mapped[str] = mapped_column(String(7), default="#FF0050")

@@ -202,20 +202,22 @@ async def init_db():
             await _migrate_sqlite(conn)
     logger.info("db initialized")
 
-    # One-time normalization: the stock message template changed from bold
-    # @text ("**{discord}** is LIVE!!!") to the mention version
-    # ("{discord} is LIVE!!!"). Only rows still on the untouched stock
-    # template move — customized messages are left alone.
+    # One-time normalization: stock message templates from earlier formats
+    # move to the current one ("{discord} is LIVE!"). Only rows still on an
+    # untouched stock template move — customized messages are left alone.
     async with async_session() as session:
         from sqlalchemy import select
         from .models import GlobalSettings, User
 
         try:
             gs = await session.get(GlobalSettings, 1)
-            if gs and gs.custom_message == "{ping_role}\n**{discord}** is LIVE!!!":
-                gs.custom_message = "{ping_role}\n{discord} is LIVE!!!"
+            if gs and gs.custom_message in (
+                "{ping_role}\n**{discord}** is LIVE!!!",
+                "{ping_role}\n{discord} is LIVE!!!",
+            ):
+                gs.custom_message = "{discord} is LIVE!"
                 await session.commit()
-                logger.info("db normalized stock custom_message to mention version")
+                logger.info("db normalized stock custom_message to forest version")
         except Exception as e:
             logger.warning(f"custom_message normalize skipped err={type(e).__name__}")
 

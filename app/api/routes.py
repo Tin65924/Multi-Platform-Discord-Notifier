@@ -22,7 +22,8 @@ from ..security import (
     get_current_user,
 )
 from ..tiktok import checker
-from ..webhook import build_embed, send_webhook, creator_link_text, platform_label, display_account
+from ..webhook import build_embed, send_webhook, platform_label, display_account
+from ..wildlines import WILD_LINES
 from ..poller import poll_once, poll_youtube, poll_kick
 
 logger = logging.getLogger(__name__)
@@ -43,14 +44,13 @@ def _webhook_cfg(gs: GlobalSettings | None):
 def _style_for(sub: Subscription, image: str | None, color: str) -> dict:
     """Resolve per-creator style with global fallbacks.
 
-    Link text always derives from Creator Name; the message is always the
-    global template (per-creator overrides retired).
+    The embed description is a randomized forest line (Creator Name as NAME);
+    the message is always the global template (per-creator overrides retired).
     """
     return {
         "author_name": sub.author_name or None,
         "discord_username": sub.discord_username or None,
         "discord_user_id": sub.discord_user_id or None,
-        "link_text": creator_link_text(sub.author_name, sub.tiktok_username, sub.platform or "tiktok"),
         "image_url": sub.image_url or image,
         "color": sub.color or color,
     }
@@ -236,7 +236,6 @@ async def list_subs(session: AsyncSession = Depends(get_session), user=Depends(r
             "discord_user_id": s.discord_user_id,
             "image_url": s.image_url,
             "color": s.color,
-            "link_text_preview": creator_link_text(s.author_name, s.tiktok_username, s.platform or "tiktok"),
             "last_checked_at": s.last_checked_at.isoformat() if s.last_checked_at else None,
             "last_notified_at": s.last_notified_at.isoformat() if s.last_notified_at else None,
             "enabled": s.enabled,
@@ -305,7 +304,6 @@ def _payload_for(sub: Subscription, msg: str, ping: str | None, everyone: bool, 
         message=msg,
         ping_role_id=ping,
         ping_everyone=everyone,
-        link_text=style["link_text"],
         image_url=style["image_url"],
         color=style["color"],
         author_name=style["author_name"],
@@ -349,7 +347,7 @@ async def send_custom(request: Request, session: AsyncSession = Depends(get_sess
     if not webhook_url:
         raise HTTPException(400, "Configure webhook first (Defaults tab)")
     payload = {
-        "username": "Playtopia LIVE",
+        "username": "Forest Watcher",
         "content": content,
         "allowed_mentions": {"parse": ["everyone", "roles", "users"]},
     }
@@ -395,6 +393,12 @@ async def payload_preview(sub_id: int, session: AsyncSession = Depends(get_sessi
     gs = await session.get(GlobalSettings, 1)
     _, ping, msg, everyone, image, color = _webhook_cfg(gs)
     return _payload_for(sub, msg, ping, everyone, image, color)
+
+
+@router.get("/wildlines")
+async def wild_lines(user=Depends(require_admin)):
+    """Forest line templates (NAME placeholder) for the Defaults live preview."""
+    return list(WILD_LINES)
 
 
 @router.post("/subscriptions/{sub_id}/check-now")
