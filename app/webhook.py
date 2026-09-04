@@ -64,7 +64,8 @@ def resolve_color(value: str | None) -> tuple[str, int]:
 
 
 def default_link_text(username: str, platform: str = "tiktok") -> str:
-    return f"Watch {display_account(platform, username)}'s LIVE!"
+    # No @ by request: "Watch josh_xxii7's LIVE!" (display_account adds @).
+    return f"Watch {display_account(platform, username).lstrip('@')}'s LIVE!"
 
 
 # --- Multi-platform ----------------------------------------------------------
@@ -151,6 +152,7 @@ def build_embed(
       embed:   author header, clickable link line, big image, color bar,
                Watch Stream / Profile buttons.
     Template tags: {account} {link} {ping_role}
+    Markdown (e.g. **bold**) passes through untouched — Discord renders it.
     """
     link = platform_live_url(platform, username)
     profile_link = platform_profile_url(platform, username)
@@ -160,7 +162,7 @@ def build_embed(
 
     ping_mention = _ping_mention(ping_everyone, ping_role_id)
     content = (
-        (message or "{ping_role}\n{account} is LIVE!")
+        (message or "{ping_role}\n**{account}** is LIVE!!!")
         .replace("{account}", account)
         .replace("{link}", link)
         .replace("{ping_role}", ping_mention)

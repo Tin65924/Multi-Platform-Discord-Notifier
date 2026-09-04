@@ -56,7 +56,7 @@
         <div class="grid2">
           <input id="role" placeholder="Role ID to ping (optional)">
           <textarea id="message" rows="2">{ping_role}
-{account} is LIVE!</textarea>
+**{account}** is LIVE!!!</textarea>
         </div>
         <label style="font-size:12px; display:flex; align-items:center; gap:8px; color:var(--pt-muted)">
           <input id="pingEveryone" type="checkbox" checked> Ping @everyone (like NotifyMe)
@@ -335,7 +335,7 @@ function openEdit(id) {
     <div class="grid2">
       <div><label class="mini">Header name (blank = ${escapeHtml(disp)})</label>
       <input id="m_author" value="${escapeHtml(s.author_name||'')}"></div>
-      <div><label class="mini">Link text (blank = Watch ${escapeHtml(disp)}'s LIVE!)</label>
+      <div><label class="mini">Link text (blank = Watch ${escapeHtml(disp.replace(/^@/, ''))}'s LIVE!)</label>
       <input id="m_linktext" value="${escapeHtml(s.link_text||'')}"></div>
     </div>
     <div><label class="mini">Message override (blank = global; tags: {account} {link} {ping_role})</label>
@@ -462,7 +462,7 @@ async function loadSettings() {
   if (s.webhook_configured) {
     webhook.value = s.raw_webhook_url || '';
     role.value = s.ping_role_id || '';
-    message.value = s.custom_message || '{ping_role}\n{account} is LIVE!';
+    message.value = s.custom_message || '{ping_role}\n**{account}** is LIVE!!!';
     pingEveryone.checked = !!s.ping_everyone;
     defImage.value = s.embed_image_url || '';
     defColor.value = (s.embed_color || '#FF0050').toLowerCase();

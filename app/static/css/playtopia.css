@@ -411,7 +411,38 @@ label.mini { font-size: 11px; color: var(--pt-muted); display: block; margin-bot
   overflow: auto; max-height: 220px; white-space: pre-wrap; word-break: break-word;
 }
 
-@media (max-width: 640px) { .grid2 { grid-template-columns: 1fr; } .pt-nav { display: none; } }
+@media (max-width: 640px) { .grid2 { grid-template-columns: 1fr; } }
+
+/* ---- responsive: phones & small tablets (mobile admins) ---- */
+@media (max-width: 640px) {
+  /* tabs stay usable: horizontal scroll instead of disappearing */
+  .pt-nav {
+    display: flex; margin-left: 0; margin-top: 8px;
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+    gap: 0; max-width: 100%;
+  }
+  .pt-nav__link { flex-shrink: 0; padding: 0.375rem 0.6rem; }
+  .pt-header__inner { flex-wrap: wrap; height: auto; min-height: 64px; padding: 10px 0; gap: 0.5rem 1rem; }
+  .pt-userbox { font-size: 11px; gap: 8px; }
+  .pt-userbox #whoami { max-width: 45vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* add-creator form never squeezes the input to zero */
+  #addForm { flex-wrap: wrap; }
+  #addForm input { flex: 1 1 200px; min-width: 0; }
+  #addForm button { flex-shrink: 0; }
+  /* audit rows stack instead of crushing */
+  .auditrow { flex-wrap: wrap; gap: 4px 12px; }
+  .auditrow .a, .auditrow .c { width: auto; }
+  .auditrow .d { flex-basis: 100%; }
+  /* admin cards: actions onto their own line */
+  .admin-card .rowline { align-items: flex-start; }
+}
+/* touch targets on coarse pointers (phones/tablets) */
+@media (pointer: coarse) {
+  .btn { min-height: 40px; }
+  .btn-xs { min-height: 36px; }
+  .creator__actions .btn { padding: 11px 6px; }
+  .pt-nav__link { padding-top: 0.6rem; padding-bottom: 0.6rem; }
+}
 
 /* ---- Toasts: top-right slide-in feedback ---- */
 .pt-toasts {

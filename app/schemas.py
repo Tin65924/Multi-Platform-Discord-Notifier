@@ -100,7 +100,7 @@ class GlobalSettingsIn(BaseModel):
     webhook_url: str
     ping_role_id: str | None = None
     ping_everyone: bool = True
-    custom_message: str = "{ping_role}\n{account} is LIVE!"
+    custom_message: str = "{ping_role}\n**{account}** is LIVE!!!"
     embed_image_url: str | None = None
     embed_color: str = "#FF0050"
 
