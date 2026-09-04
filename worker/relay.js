@@ -29,7 +29,9 @@ export default {
     } catch {
       return new Response("Bad Request", { status: 400 });
     }
-    if (!env.RELAY_SECRET || body.secret !== env.RELAY_SECRET) {
+    const got = String(body.secret ?? "").trim();
+    const want = String(env.RELAY_SECRET ?? "").trim();
+    if (!want || got !== want) {
       return new Response("Forbidden", { status: 403 });
     }
     if (!env.DISCORD_WEBHOOK_URL || !env.DISCORD_WEBHOOK_URL.includes("discord.com/api/webhooks")) {
