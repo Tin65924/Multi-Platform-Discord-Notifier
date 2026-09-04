@@ -145,11 +145,17 @@
 {% block scripts %}
 <script>
 let ME = null;
-async function api(path, opts={}) {
+async function api(path, opts={}, _retried=false) {
   let r;
   try {
     r = await fetch(path, opts);
   } catch (e) {
+    // Transient blip (e.g. Render redeploy rotated the backend IP):
+    // retry once on a fresh connection before giving up.
+    if (!_retried) {
+      await new Promise(res => setTimeout(res, 1200));
+      return api(path, opts, true);
+    }
     toast('Network error — check your connection and retry.', 'err');
     throw e;
   }
