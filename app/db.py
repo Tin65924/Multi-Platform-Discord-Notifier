@@ -8,19 +8,44 @@ from .config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+# Accept any pasted Postgres URL form and adapt it to our async stack:
+#   postgres://... | postgresql://... | postgresql+psycopg2://...
+#     -> postgresql+asyncpg://...  (asyncpg is our async driver; psycopg2
+#        is sync and is NOT installed, so sync-driver URLs crash at import)
+# SSL: asyncpg understands ?sslmode=require natively (Neon's default form),
+# so we only append it when talking to Neon without an explicit sslmode.
+def normalize_db_url(url: str) -> str:
+    u = (url or "").strip()
+    if u.startswith("postgres://"):
+        u = "postgresql://" + u[len("postgres://"):]
+    if u.startswith("postgresql://"):
+        u = "postgresql+asyncpg://" + u[len("postgresql://"):]
+    elif u.startswith("postgresql+psycopg2://"):
+        u = "postgresql+asyncpg://" + u[len("postgresql+psycopg2://"):]
+    elif u.startswith("postgresql+psyc://"):
+        u = "postgresql+asyncpg://" + u[len("postgresql+psyc://"):]
+    u = u.replace("ssl=require", "sslmode=require")
+    return u
+
+
+DB_URL = normalize_db_url(settings.DATABASE_URL)
+
 # Render free 512MB + Neon free (max ~20 connections): keep the pool tiny.
 # NullPool for serverless Neon (avoids holding idle conns across Render sleep).
-_is_neon = "neon.tech" in settings.DATABASE_URL
-_needs_ssl = _is_neon or "ssl=require" in settings.DATABASE_URL
+_is_pg = DB_URL.startswith("postgresql")
+_is_neon = "neon.tech" in DB_URL
+if _is_neon and "sslmode=" not in DB_URL:
+    DB_URL += ("&" if "?" in DB_URL else "?") + "sslmode=require"
 _engine_kw: dict = {"echo": False, "future": True}
 if _is_neon:
     _engine_kw["poolclass"] = NullPool
-elif settings.DATABASE_URL.startswith("postgresql"):
+elif _is_pg:
     _engine_kw.update(pool_size=5, max_overflow=0)
-if _needs_ssl:
-    _engine_kw["connect_args"] = {"ssl": "require"}
 
-engine = create_async_engine(settings.DATABASE_URL, **_engine_kw)
+logger.info(f"db dialect: {DB_URL.split(':')[0] if ':' in DB_URL else 'unknown'} "
+            f"pool={'null' if _is_neon else 'sized'}")
+
+engine = create_async_engine(DB_URL, **_engine_kw)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
