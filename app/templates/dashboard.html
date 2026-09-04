@@ -51,32 +51,38 @@
     <div class="card">
       <h2>Global defaults</h2>
       <p class="hint">Used for every creator unless that creator overrides it. Channel: Discord &rarr; Integrations &rarr; Webhooks &rarr; Copy URL.</p>
-      <div style="display:grid; gap:12px">
-        <input id="webhook" placeholder="https://discord.com/api/webhooks/...">
-        <div class="grid2">
-          <input id="role" placeholder="Role ID to ping (optional)">
-          <textarea id="message" rows="2">{ping_role}
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px; align-items:start">
+        <div style="display:grid; gap:12px">
+          <input id="webhook" placeholder="https://discord.com/api/webhooks/...">
+          <div class="grid2">
+            <input id="role" placeholder="Role ID to ping (optional)">
+            <textarea id="message" rows="2">{ping_role}
 **{discord}** is LIVE!!!</textarea>
-        </div>
-        <label style="font-size:12px; display:flex; align-items:center; gap:8px; color:var(--pt-muted)">
-          <input id="pingEveryone" type="checkbox" checked> Ping @everyone
-        </label>
-        <div class="grid2" style="align-items:end">
-          <div>
-            <label class="mini">Default image (public https:// URL)</label>
-            <input id="defImage" placeholder="https://... (fallback photo)">
           </div>
-          <div>
-            <label class="mini">Default color</label>
-            <div style="display:flex; gap:8px; align-items:center">
-              <input id="defColor" type="color" value="#FF0050">
-              <span id="defColorHex" style="font-size:12px; font-family:monospace">#FF0050</span>
+          <label style="font-size:12px; display:flex; align-items:center; gap:8px; color:var(--pt-muted)">
+            <input id="pingEveryone" type="checkbox" checked> Ping @everyone
+          </label>
+          <div class="grid2" style="align-items:end">
+            <div>
+              <label class="mini">Default image (public https:// URL)</label>
+              <input id="defImage" placeholder="https://... (fallback photo)">
+            </div>
+            <div>
+              <label class="mini">Default color</label>
+              <div style="display:flex; gap:8px; align-items:center">
+                <input id="defColor" type="color" value="#FF0050">
+                <span id="defColorHex" style="font-size:12px; font-family:monospace">#FF0050</span>
+              </div>
             </div>
           </div>
+          <p class="hint" style="margin:0">Tags: <code>{account}</code> <code>{link}</code> <code>{ping_role}</code></p>
+          <div><button onclick="saveSettings()" class="btn btn-gold">Save defaults</button></div>
+          <div id="settingsMsg" class="msg"></div>
         </div>
-        <p class="hint" style="margin:0">Tags: <code>{account}</code> <code>{link}</code> <code>{ping_role}</code></p>
-        <div><button onclick="saveSettings()" class="btn btn-gold">Save defaults</button></div>
-        <div id="settingsMsg" class="msg"></div>
+        <div>
+          <label class="mini">Live preview (sample creator)</label>
+          <div id="defaultsPreview"></div>
+        </div>
       </div>
     </div>
     <div class="card">
@@ -134,7 +140,10 @@
   <div class="modal" role="dialog" aria-modal="true">
     <div class="modal-head">
       <h3 id="modalTitle"></h3>
-      <button class="modal-x" onclick="closeModal()" aria-label="Close">&times;</button>
+      <div style="display:flex; gap:8px; align-items:center">
+        <span id="modalAction"></span>
+        <button class="modal-x" onclick="closeModal()" aria-label="Close">&times;</button>
+      </div>
     </div>
     <div id="modalBody" class="modal-body"></div>
   </div>
@@ -307,15 +316,19 @@ function renderSubs() {
 }
 // --- modal framework ---
 let EDITING_ID = null;
-function openModal(title, bodyHtml) {
+let PREVIEW_ID = null;
+function openModal(title, bodyHtml, actionHtml='') {
   document.getElementById('modalTitle').textContent = title;
   document.getElementById('modalBody').innerHTML = bodyHtml;
+  document.getElementById('modalAction').innerHTML = actionHtml;
   document.getElementById('modalOverlay').classList.remove('hidden');
 }
 function closeModal() {
   document.getElementById('modalOverlay').classList.add('hidden');
   document.getElementById('modalBody').innerHTML = '';
+  document.getElementById('modalAction').innerHTML = '';
   EDITING_ID = null;
+  PREVIEW_ID = null;
 }
 const _overlay = document.getElementById('modalOverlay');
 if (_overlay) _overlay.addEventListener('click', (e) => {
@@ -358,7 +371,7 @@ function openEdit(id) {
     <div style="display:flex; gap:10px; align-items:center">
       <button onclick="saveEdit()" class="btn btn-gold btn-xs">Save</button>
       <span id="m_msg2" class="msg" style="margin:0"></span>
-    </div>`);
+    </div>`, `<button onclick="previewSub(EDITING_ID)" class="btn btn-ghost btn-xs">Preview</button>`);
   document.getElementById('m_color').addEventListener('input', e => {
     document.getElementById('m_colorhex').textContent = e.target.value.toUpperCase();
   });
@@ -390,6 +403,7 @@ function discordHex(colorInt) {
 async function previewSub(id) {
   const r = await api('/api/subscriptions/'+id+'/payload');
   if (!r.ok) { toast(await r.text(), 'err'); return; }
+  PREVIEW_ID = id;
   const p = await r.json();
   const emb = (p.embeds || [])[0] || {};
   const btns = (((p.components || [])[0] || {}).components || []);
@@ -420,7 +434,8 @@ async function previewSub(id) {
       <summary>Raw JSON payload</summary>
       <pre>${escapeHtml(JSON.stringify(p, null, 2))}</pre>
     </details>
-    <div><button onclick="closeModal()" class="btn btn-ghost btn-xs">Close</button></div>`);
+    <div><button onclick="closeModal()" class="btn btn-ghost btn-xs">Close</button></div>`,
+    `<button onclick="openEdit(PREVIEW_ID)" class="btn btn-ghost btn-xs">Edit creator</button>`);
 }
 
 // --- force notification ---
@@ -453,9 +468,53 @@ document.getElementById('addForm').addEventListener('submit', async (e) => {
 });
 
 // --- global defaults ---
+// Live preview: mirrors build_embed() in app/webhook.py with a sample creator,
+// so the right-hand panel updates as the inputs change. Unsaved edits show too.
+function renderDefaultsPreview() {
+  const box = document.getElementById('defaultsPreview');
+  if (!box) return;
+  const sample = 'samplecreator';
+  const account = '@' + sample;
+  const link = 'https://www.tiktok.com/@' + sample + '/live';
+  const profile = 'https://www.tiktok.com/@' + sample;
+  const tpl = document.getElementById('message').value || '{ping_role}\n**{discord}** is LIVE!!!';
+  const everyone = document.getElementById('pingEveryone').checked;
+  const roleId = document.getElementById('role').value.trim();
+  const ping = everyone ? '@everyone' : (roleId ? '<@&' + roleId + '>' : '');
+  let content = tpl.split('{discord}').join(account).split('{account}').join(account)
+    .split('{link}').join(link).split('{ping_role}').join(ping);
+  if (ping && !tpl.includes('{ping_role}') && !content.includes(ping)) content = (ping + '\n' + content).trim();
+  content = content.trim().slice(0, 2000);
+  const label = "Watch samplecreator's LIVE!";
+  let color = (document.getElementById('defColor').value || '#FF0050').toUpperCase();
+  if (!/^#[0-9A-F]{6}$/.test(color)) color = '#FF0050';
+  const imgUrl = document.getElementById('defImage').value.trim();
+  box.innerHTML = `
+    <div class="discord-msg">
+      ${content ? `<div class="discord-content">${escapeHtml(content)}</div>` : ''}
+      <div class="discord-embed">
+        <div class="discord-embed__bar" style="background:${color}"></div>
+        <div class="discord-embed__main">
+          <div class="discord-embed__author">${escapeHtml(account)}</div>
+          <div class="discord-embed__desc"><a href="${escapeHtml(link)}" target="_blank">${escapeHtml(label)}</a></div>
+          ${imgUrl ? `<img src="${escapeHtml(imgUrl)}" class="discord-embed__img" onerror="this.remove()">` : ''}
+          <div class="discord-embed__footer">Playtopia LIVE &bull; TikTok</div>
+        </div>
+      </div>
+      <div class="discord-btns">
+        <a class="discord-btn" href="${escapeHtml(link)}" target="_blank">Watch Stream</a>
+        <a class="discord-btn" href="${escapeHtml(profile)}" target="_blank">Profile</a>
+      </div>
+    </div>`;
+}
 document.getElementById('defColor').addEventListener('input', e => {
   document.getElementById('defColorHex').textContent = e.target.value.toUpperCase();
+  renderDefaultsPreview();
 });
+['role', 'message', 'defImage'].forEach(id => {
+  document.getElementById(id).addEventListener('input', renderDefaultsPreview);
+});
+document.getElementById('pingEveryone').addEventListener('change', renderDefaultsPreview);
 async function loadSettings() {
   const r = await api('/api/settings');
   const s = await r.json();
@@ -475,6 +534,7 @@ async function loadSettings() {
     settingsMsg.textContent = 'Configured: ' + s.webhook_url_masked;
     settingsMsg.className = 'msg msg-ok';
   }
+  renderDefaultsPreview();
 }
 async function saveSettings() {
   const body = {webhook_url: webhook.value, ping_role_id: role.value || null, ping_everyone: pingEveryone.checked,
