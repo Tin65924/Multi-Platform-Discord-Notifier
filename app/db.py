@@ -24,8 +24,48 @@ def normalize_db_url(url: str) -> str:
         u = "postgresql+asyncpg://" + u[len("postgresql+psycopg2://"):]
     elif u.startswith("postgresql+psyc://"):
         u = "postgresql+asyncpg://" + u[len("postgresql+psyc://"):]
-    u = u.replace("ssl=require", "sslmode=require")
     return u
+
+
+# Query keys asyncpg.connect() actually accepts. Everything else in a pasted
+# URL (sslmode, channel_binding, ...) would be forwarded by SQLAlchemy as a
+# kwarg and crash with TypeError — so we translate or drop them here.
+_ASYNCPG_QUERY_ALLOWLIST = frozenset({
+    "database", "user", "password", "host", "port", "timeout",
+    "command_timeout", "statement_cache_size", "max_cacheable_statement_size",
+    "max_cached_statement_lifetime", "target_session_attrs", "server_settings",
+    "direct_tls",
+})
+
+
+def _sanitize_query(url: str) -> tuple[str, str | None]:
+    """Split a DB URL into (clean_url, ssl_mode).
+
+    - Translates ?sslmode=... / ?ssl=... into an ssl mode (applied later as
+      a real SSLContext via connect_args).
+    - Drops anything asyncpg doesn't understand (e.g. channel_binding) with
+      a log line instead of crashing at connect time.
+    """
+    from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+
+    parts = urlsplit(url)
+    q = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)]
+    mode = None
+    kept = []
+    dropped = []
+    for k, v in q:
+        if k == "sslmode" and mode is None:
+            mode = v
+        elif k == "ssl":
+            mode = mode or ("require" if v not in ("0", "false", "disable") else "disable")
+        elif k in _ASYNCPG_QUERY_ALLOWLIST:
+            kept.append((k, v))
+        else:
+            dropped.append(k)
+    if dropped:
+        logger.warning(f"db url: ignoring unsupported query params {sorted(set(dropped))}")
+    clean = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(kept), parts.fragment))
+    return clean, mode
 
 
 DB_URL = normalize_db_url(settings.DATABASE_URL)
@@ -34,16 +74,21 @@ DB_URL = normalize_db_url(settings.DATABASE_URL)
 # NullPool for serverless Neon (avoids holding idle conns across Render sleep).
 _is_pg = DB_URL.startswith("postgresql")
 _is_neon = "neon.tech" in DB_URL
-if _is_neon and "sslmode=" not in DB_URL:
-    DB_URL += ("&" if "?" in DB_URL else "?") + "sslmode=require"
+DB_URL, _ssl_mode = _sanitize_query(DB_URL)
+if _ssl_mode is None and _is_neon:
+    _ssl_mode = "require"  # Neon refuses unencrypted connections
 _engine_kw: dict = {"echo": False, "future": True}
 if _is_neon:
     _engine_kw["poolclass"] = NullPool
 elif _is_pg:
     _engine_kw.update(pool_size=5, max_overflow=0)
+if _is_pg and _ssl_mode and _ssl_mode != "disable":
+    import ssl as _ssl
+
+    _engine_kw["connect_args"] = {"ssl": _ssl.create_default_context()}
 
 logger.info(f"db dialect: {DB_URL.split(':')[0] if ':' in DB_URL else 'unknown'} "
-            f"pool={'null' if _is_neon else 'sized'}")
+            f"pool={'null' if _is_neon else 'sized'} ssl={_ssl_mode or 'off'}")
 
 engine = create_async_engine(DB_URL, **_engine_kw)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
