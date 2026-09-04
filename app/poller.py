@@ -96,6 +96,7 @@ async def poll_once():
                     image_url=sub.image_url or embed_image_url,
                     color=sub.color or embed_color,
                     author_name=sub.author_name,
+                    discord_username=sub.discord_username,
                 )
                 ok = await send_webhook(webhook_url, payload, timeout=settings.WEBHOOK_TIMEOUT_SECONDS)
                 if ok:
@@ -187,6 +188,7 @@ async def poll_youtube():
                     image_url=sub.image_url or embed_image_url,
                     color=sub.color or embed_color,
                     author_name=sub.author_name,
+                    discord_username=sub.discord_username,
                     platform="youtube",
                 )
                 ok = await send_webhook(webhook_url, payload, timeout=settings.WEBHOOK_TIMEOUT_SECONDS)
@@ -284,6 +286,7 @@ async def poll_kick():
                     image_url=sub.image_url or embed_image_url,
                     color=sub.color or embed_color,
                     author_name=sub.author_name,
+                    discord_username=sub.discord_username,
                     platform="kick",
                 )
                 ok = await send_webhook(webhook_url, payload, timeout=settings.WEBHOOK_TIMEOUT_SECONDS)

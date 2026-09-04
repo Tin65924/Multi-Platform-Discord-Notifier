@@ -44,6 +44,7 @@ def _style_for(sub: Subscription, image: str | None, color: str) -> dict:
     """Resolve per-creator style with global fallbacks."""
     return {
         "author_name": sub.author_name or None,
+        "discord_username": sub.discord_username or None,
         "message": sub.message or None,
         "link_text": sub.link_text or None,
         "image_url": sub.image_url or image,
@@ -227,6 +228,7 @@ async def list_subs(session: AsyncSession = Depends(get_session), user=Depends(r
             "label": s.label,
             "is_live": s.is_live,
             "author_name": s.author_name,
+            "discord_username": s.discord_username,
             "message": s.message,
             "link_text": s.link_text,
             "image_url": s.image_url,
@@ -268,6 +270,7 @@ async def update_style(sub_id: int, payload: SubscriptionStyleIn, session: Async
     if not sub:
         raise HTTPException(404, "Not found")
     sub.author_name = (payload.author_name or "")[:128] or None
+    sub.discord_username = (payload.discord_username or "")[:64] or None
     sub.message = (payload.message or "")[:500] or None
     sub.link_text = (payload.link_text or "")[:128] or None
     sub.image_url = payload.image_url
@@ -301,6 +304,7 @@ def _payload_for(sub: Subscription, msg: str, ping: str | None, everyone: bool, 
         color=style["color"],
         author_name=style["author_name"],
         platform=sub.platform or "tiktok",
+        discord_username=style["discord_username"],
     )
 
 

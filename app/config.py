@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     RELAY_URL: str = ""
     RELAY_SECRET: str = ""
     PING_ROLE_ID: str = ""
-    CUSTOM_MESSAGE: str = "{ping_role}\n**{account}** is LIVE!!!"
+    CUSTOM_MESSAGE: str = "{ping_role}\n**{discord}** is LIVE!!!"
     # Hardcoded embed image (public https URL) — can also be set in dashboard
     EMBED_IMAGE_URL: str = ""
     # Optional TikTok login session (browser cookie "sessionid" from tiktok.com).

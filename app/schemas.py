@@ -100,7 +100,7 @@ class GlobalSettingsIn(BaseModel):
     webhook_url: str
     ping_role_id: str | None = None
     ping_everyone: bool = True
-    custom_message: str = "{ping_role}\n**{account}** is LIVE!!!"
+    custom_message: str = "{ping_role}\n**{discord}** is LIVE!!!"
     embed_image_url: str | None = None
     embed_color: str = "#FF0050"
 
@@ -144,18 +144,29 @@ class SubscriptionStyleIn(BaseModel):
     """Per-creator embed customization. All optional, empty = global default."""
 
     author_name: str | None = None
+    discord_username: str | None = None
     message: str | None = None
     link_text: str | None = None
     image_url: str | None = None
     color: str | None = None
 
-    @field_validator("author_name", "message", "link_text", "image_url")
+    @field_validator("author_name", "discord_username", "message", "link_text", "image_url")
     @classmethod
     def empty_to_none(cls, v):
         if v is None:
             return None
         v = v.strip()
         return v or None
+
+    @field_validator("discord_username")
+    @classmethod
+    def normalize_discord(cls, v):
+        if v is None or v == "":
+            return None
+        v = v.strip().lstrip("@")
+        if not v or len(v) > 64:
+            raise ValueError("Discord username: 1-64 chars (with or without @)")
+        return v
 
     @field_validator("image_url")
     @classmethod

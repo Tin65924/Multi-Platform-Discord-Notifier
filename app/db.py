@@ -109,6 +109,7 @@ _SUBSCRIPTION_COLS = (
     ("avatar_url", "TEXT"),
     ("cover_url", "TEXT"),
     ("author_name", "VARCHAR(128)"),
+    ("discord_username", "VARCHAR(64)"),
     ("message", "TEXT"),
     ("link_text", "VARCHAR(128)"),
     ("image_url", "TEXT"),

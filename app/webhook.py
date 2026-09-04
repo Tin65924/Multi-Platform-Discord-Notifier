@@ -145,13 +145,16 @@ def build_embed(
     color: str | None = None,
     author_name: str | None = None,
     platform: str | None = "tiktok",
+    discord_username: str | None = None,
 ) -> dict:
     """
     Fully owned embed — nothing fetched from any platform.
       content: message template ("@everyone\\n@user is LIVE!")
       embed:   author header, clickable link line, big image, color bar,
                Watch Stream / Profile buttons.
-    Template tags: {account} {link} {ping_role}
+    Template tags: {account} {discord} {link} {ping_role}
+      {account} = platform handle (@user); {discord} = creator's Discord
+      username if set, else same as {account}.
     Markdown (e.g. **bold**) passes through untouched — Discord renders it.
     """
     link = platform_live_url(platform, username)
@@ -159,10 +162,14 @@ def build_embed(
     account = display_account(platform, username)
     author = (author_name or "").strip() or account
     label = (link_text or "").strip() or default_link_text(username, platform)
+    discord = f"@{(discord_username or '').strip().lstrip('@')}" or account
+    if discord == "@":
+        discord = account
 
     ping_mention = _ping_mention(ping_everyone, ping_role_id)
     content = (
-        (message or "{ping_role}\n**{account}** is LIVE!!!")
+        (message or "{ping_role}\n**{discord}** is LIVE!!!")
+        .replace("{discord}", discord)
         .replace("{account}", account)
         .replace("{link}", link)
         .replace("{ping_role}", ping_mention)
