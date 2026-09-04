@@ -20,6 +20,10 @@ services:
         generateValue: true # copy it from the dashboard after first deploy, then log in
       - key: DASHBOARD_WEBHOOK_URL
         sync: false # or paste it in the dashboard Defaults tab instead
+      - key: RELAY_URL
+        sync: false # Cloudflare Worker URL, see worker/README.md
+      - key: RELAY_SECRET
+        sync: false # must match the Worker's RELAY_SECRET
       - key: PING_ROLE_ID
         sync: false
       - key: EMBED_IMAGE_URL

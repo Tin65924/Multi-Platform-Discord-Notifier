@@ -255,8 +255,24 @@ async def send_webhook(webhook_url: str, payload: dict, timeout: int = 10) -> bo
             "webhook sending has_content=%s has_image=%s buttons=%s",
             bool(payload.get("content")), bool((emb.get("image") or {}).get("url")), n_btns,
         )
+        relay_url = ""
+        relay_secret = ""
+        try:
+            relay_url = (getattr(_settings, "RELAY_URL", "") or "").strip()
+            relay_secret = (getattr(_settings, "RELAY_SECRET", "") or "").strip()
+        except Exception:
+            pass
         async with httpx.AsyncClient(timeout=timeout, headers={"User-Agent": _DISCORD_UA}) as client:
-            resp = await client.post(with_components_param(webhook_url), json=payload)
+            if relay_url and relay_secret:
+                # Cloudflare Worker relay: it forwards to Discord from clean IPs.
+                # Query params (with_components) ride along; Worker forwards them.
+                logger.info("webhook sending via relay")
+                resp = await client.post(
+                    with_components_param(relay_url),
+                    json={"secret": relay_secret, "payload": payload},
+                )
+            else:
+                resp = await client.post(with_components_param(webhook_url), json=payload)
             if resp.status_code in (200, 204):
                 _backoff_until = 0.0
                 return True

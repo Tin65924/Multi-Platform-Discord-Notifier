@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     SUPERADMIN_USER: str = "superadmin"
     SUPERADMIN_PASS: str = "changeme123"
     DASHBOARD_WEBHOOK_URL: str = ""  # paste Discord webhook here
+    # Cloudflare Worker relay (bypasses flagged host IPs). When both are set,
+    # posts go to RELAY_URL as {secret, payload} instead of Discord directly.
+    RELAY_URL: str = ""
+    RELAY_SECRET: str = ""
     PING_ROLE_ID: str = ""
     CUSTOM_MESSAGE: str = "{ping_role}\n{account} is LIVE!"
     # Hardcoded embed image (public https URL) — can also be set in dashboard
