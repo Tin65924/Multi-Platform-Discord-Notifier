@@ -42,7 +42,7 @@ class GlobalSettings(Base):
     webhook_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     ping_role_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     ping_everyone: Mapped[bool] = mapped_column(Boolean, default=True)
-    custom_message: Mapped[str] = mapped_column(Text, default="{ping_role}\n**{discord}** is LIVE!!!")
+    custom_message: Mapped[str] = mapped_column(Text, default="{ping_role}\n{discord} is LIVE!!!")
     # Global defaults used when a creator leaves their own field empty
     embed_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     embed_color: Mapped[str] = mapped_column(String(7), default="#FF0050")
@@ -65,8 +65,9 @@ class Subscription(Base):
 
     # Per-creator embed customization (empty = use global default).
     # Previewed live in the dashboard before saving.
-    author_name: Mapped[str | None] = mapped_column(String(128), nullable=True)  # embed header, default @username
-    discord_username: Mapped[str | None] = mapped_column(String(64), nullable=True)  # for {discord} tag, default @tiktok handle
+    author_name: Mapped[str | None] = mapped_column(String(128), nullable=True)  # Creator Name: embed header + link text
+    discord_username: Mapped[str | None] = mapped_column(String(64), nullable=True)  # display name for {discord} fallback
+    discord_user_id: Mapped[str | None] = mapped_column(String(32), nullable=True)  # numeric ID -> real <@id> mention
     message: Mapped[str | None] = mapped_column(Text, nullable=True)  # content override, tags: {account} {link} {ping_role}
     link_text: Mapped[str | None] = mapped_column(String(128), nullable=True)  # default: Watch user's LIVE! (no @)
     image_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # big photo, default global image

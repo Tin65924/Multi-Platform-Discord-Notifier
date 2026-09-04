@@ -113,6 +113,7 @@ _SUBSCRIPTION_COLS = (
     ("message", "TEXT"),
     ("link_text", "VARCHAR(128)"),
     ("image_url", "TEXT"),
+    ("discord_user_id", "VARCHAR(32)"),
     ("color", "VARCHAR(7)"),
     ("platform", "VARCHAR(16) DEFAULT 'tiktok'"),
 )
@@ -200,6 +201,23 @@ async def init_db():
         else:
             await _migrate_sqlite(conn)
     logger.info("db initialized")
+
+    # One-time normalization: the stock message template changed from bold
+    # @text ("**{discord}** is LIVE!!!") to the mention version
+    # ("{discord} is LIVE!!!"). Only rows still on the untouched stock
+    # template move — customized messages are left alone.
+    async with async_session() as session:
+        from sqlalchemy import select
+        from .models import GlobalSettings, User
+
+        try:
+            gs = await session.get(GlobalSettings, 1)
+            if gs and gs.custom_message == "{ping_role}\n**{discord}** is LIVE!!!":
+                gs.custom_message = "{ping_role}\n{discord} is LIVE!!!"
+                await session.commit()
+                logger.info("db normalized stock custom_message to mention version")
+        except Exception as e:
+            logger.warning(f"custom_message normalize skipped err={type(e).__name__}")
 
     # Bootstrap superadmin on first run
     async with async_session() as session:

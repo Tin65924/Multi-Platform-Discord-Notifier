@@ -22,7 +22,7 @@ from ..security import (
     get_current_user,
 )
 from ..tiktok import checker
-from ..webhook import build_embed, send_webhook, default_link_text, platform_label, display_account
+from ..webhook import build_embed, send_webhook, creator_link_text, platform_label, display_account
 from ..poller import poll_once, poll_youtube, poll_kick
 
 logger = logging.getLogger(__name__)
@@ -41,12 +41,16 @@ def _webhook_cfg(gs: GlobalSettings | None):
 
 
 def _style_for(sub: Subscription, image: str | None, color: str) -> dict:
-    """Resolve per-creator style with global fallbacks."""
+    """Resolve per-creator style with global fallbacks.
+
+    Link text always derives from Creator Name; the message is always the
+    global template (per-creator overrides retired).
+    """
     return {
         "author_name": sub.author_name or None,
         "discord_username": sub.discord_username or None,
-        "message": sub.message or None,
-        "link_text": sub.link_text or None,
+        "discord_user_id": sub.discord_user_id or None,
+        "link_text": creator_link_text(sub.author_name, sub.tiktok_username, sub.platform or "tiktok"),
         "image_url": sub.image_url or image,
         "color": sub.color or color,
     }
@@ -229,11 +233,10 @@ async def list_subs(session: AsyncSession = Depends(get_session), user=Depends(r
             "is_live": s.is_live,
             "author_name": s.author_name,
             "discord_username": s.discord_username,
-            "message": s.message,
-            "link_text": s.link_text,
+            "discord_user_id": s.discord_user_id,
             "image_url": s.image_url,
             "color": s.color,
-            "link_text_preview": s.link_text or default_link_text(s.tiktok_username, s.platform or "tiktok"),
+            "link_text_preview": creator_link_text(s.author_name, s.tiktok_username, s.platform or "tiktok"),
             "last_checked_at": s.last_checked_at.isoformat() if s.last_checked_at else None,
             "last_notified_at": s.last_notified_at.isoformat() if s.last_notified_at else None,
             "enabled": s.enabled,
@@ -271,8 +274,11 @@ async def update_style(sub_id: int, payload: SubscriptionStyleIn, session: Async
         raise HTTPException(404, "Not found")
     sub.author_name = (payload.author_name or "")[:128] or None
     sub.discord_username = (payload.discord_username or "")[:64] or None
-    sub.message = (payload.message or "")[:500] or None
-    sub.link_text = (payload.link_text or "")[:128] or None
+    sub.discord_user_id = (payload.discord_user_id or "")[:32] or None
+    # Retired overrides: link text derives from Creator Name, message is
+    # always the global template — clear any stale per-creator values.
+    sub.message = None
+    sub.link_text = None
     sub.image_url = payload.image_url
     sub.color = payload.color
     await session.commit()
@@ -296,7 +302,7 @@ def _payload_for(sub: Subscription, msg: str, ping: str | None, everyone: bool, 
     style = _style_for(sub, image, color)
     return build_embed(
         sub.tiktok_username,
-        message=style["message"] or msg,
+        message=msg,
         ping_role_id=ping,
         ping_everyone=everyone,
         link_text=style["link_text"],
@@ -305,6 +311,7 @@ def _payload_for(sub: Subscription, msg: str, ping: str | None, everyone: bool, 
         author_name=style["author_name"],
         platform=sub.platform or "tiktok",
         discord_username=style["discord_username"],
+        discord_user_id=style["discord_user_id"],
     )
 
 

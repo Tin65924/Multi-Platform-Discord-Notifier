@@ -68,6 +68,26 @@ def default_link_text(username: str, platform: str = "tiktok") -> str:
     return f"Watch {display_account(platform, username).lstrip('@')}'s LIVE!"
 
 
+def creator_link_text(author_name: str | None, username: str, platform: str | None = "tiktok") -> str:
+    """Link line always derives from Creator Name: Watch {name}'s LIVE!
+
+    Falls back to the handle-based default when no Creator Name is set.
+    """
+    name = (author_name or "").strip().lstrip("@")
+    if name:
+        return f"Watch {name}'s LIVE!"
+    return default_link_text(username, platform or "tiktok")
+
+
+def discord_mention(discord_user_id: str | None, discord_username: str | None, account: str) -> str:
+    """Real <@id> mention when the numeric user ID is known, else @text."""
+    uid = (discord_user_id or "").strip()
+    if uid:
+        return f"<@{uid}>"
+    text = f"@{(discord_username or '').strip().lstrip('@')}" or account
+    return account if text == "@" else text
+
+
 # --- Multi-platform ----------------------------------------------------------
 # Live-checking currently only supports TikTok — other platforms are stored,
 # listed and filtered in the dashboard until their pollers land. Embeds and
@@ -146,15 +166,16 @@ def build_embed(
     author_name: str | None = None,
     platform: str | None = "tiktok",
     discord_username: str | None = None,
+    discord_user_id: str | None = None,
 ) -> dict:
     """
     Fully owned embed — nothing fetched from any platform.
-      content: message template ("@everyone\\n@user is LIVE!")
+      content: message template ("@everyone\\n<@user-id> is LIVE!")
       embed:   author header, clickable link line, big image, color bar,
                Watch Stream / Profile buttons.
     Template tags: {account} {discord} {link} {ping_role}
-      {account} = platform handle (@user); {discord} = creator's Discord
-      username if set, else same as {account}.
+      {account} = platform handle (@user); {discord} = real <@id> mention
+      when discord_user_id is set, else @username text, else {account}.
     Markdown (e.g. **bold**) passes through untouched — Discord renders it.
     """
     link = platform_live_url(platform, username)
@@ -162,13 +183,11 @@ def build_embed(
     account = display_account(platform, username)
     author = (author_name or "").strip() or account
     label = (link_text or "").strip() or default_link_text(username, platform)
-    discord = f"@{(discord_username or '').strip().lstrip('@')}" or account
-    if discord == "@":
-        discord = account
+    discord = discord_mention(discord_user_id, discord_username, account)
 
     ping_mention = _ping_mention(ping_everyone, ping_role_id)
     content = (
-        (message or "{ping_role}\n**{discord}** is LIVE!!!")
+        (message or "{ping_role}\n{discord} is LIVE!!!")
         .replace("{discord}", discord)
         .replace("{account}", account)
         .replace("{link}", link)
@@ -209,12 +228,15 @@ def build_embed(
     }
     if content:
         payload["content"] = content
+    # User mentions only parse when "users" is allowed — add it whenever the
+    # message actually contains a real <@id> mention.
+    mention_users = bool((discord_user_id or "").strip()) and f"<@{(discord_user_id or '').strip()}>" in content
     if ping_everyone:
-        payload["allowed_mentions"] = {"parse": ["everyone"]}
+        payload["allowed_mentions"] = {"parse": ["everyone"] + (["users"] if mention_users else [])}
     elif ping_role_id:
-        payload["allowed_mentions"] = {"parse": ["roles"]}
+        payload["allowed_mentions"] = {"parse": ["roles"] + (["users"] if mention_users else [])}
     else:
-        payload["allowed_mentions"] = {"parse": []}
+        payload["allowed_mentions"] = {"parse": ["users"] if mention_users else []}
     return payload
 
 
