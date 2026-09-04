@@ -1,10 +1,23 @@
 import logging
+import time
 from pathlib import Path
 
 import httpx
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
+
+# Discord sits behind Cloudflare, which challenges the default
+# "python-httpx/..." User-Agent — a browser UA passes far more often.
+_DISCORD_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36"
+)
+
+# Process-wide send pause after a 429, so we stop hammering a flagged IP.
+# (Failing sends never mark a live as notified, so without this the poller
+# would retry every sweep and extend the rate-limit.)
+_backoff_until: float = 0.0
 
 from .config import get_settings as _get_settings
 
@@ -209,9 +222,30 @@ def with_components_param(webhook_url: str) -> str:
     return f"{webhook_url}{sep}with_components=true"
 
 
+def _retry_after_seconds(resp) -> int:
+    """Honor Discord/Cloudflare Retry-After (seconds or HTTP date)."""
+    try:
+        ra = (resp.headers.get("retry-after") or "").strip()
+        if ra.isdigit():
+            return int(ra)
+        if ra:
+            from email.utils import parsedate_to_datetime
+
+            dt = parsedate_to_datetime(ra)
+            return max(0, int((dt - datetime.now(timezone.utc)).total_seconds()))
+    except Exception:
+        pass
+    return 0
+
+
 async def send_webhook(webhook_url: str, payload: dict, timeout: int = 10) -> bool:
+    global _backoff_until
     if not webhook_url or "discord.com/api/webhooks" not in webhook_url:
         logger.error("webhook url invalid")
+        return False
+    now = time.monotonic()
+    if now < _backoff_until:
+        logger.debug(f"webhook backing off {int(_backoff_until - now)}s left (rate limited)")
         return False
     try:
         emb = (payload.get("embeds") or [{}])[0]
@@ -221,10 +255,20 @@ async def send_webhook(webhook_url: str, payload: dict, timeout: int = 10) -> bo
             "webhook sending has_content=%s has_image=%s buttons=%s",
             bool(payload.get("content")), bool((emb.get("image") or {}).get("url")), n_btns,
         )
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, headers={"User-Agent": _DISCORD_UA}) as client:
             resp = await client.post(with_components_param(webhook_url), json=payload)
             if resp.status_code in (200, 204):
+                _backoff_until = 0.0
                 return True
+            if resp.status_code == 429:
+                wait = _retry_after_seconds(resp) or 300
+                wait = min(max(wait, 60), 900)
+                _backoff_until = time.monotonic() + wait
+                logger.warning(
+                    f"webhook 429 rate-limited, backing off {wait}s "
+                    f"(retry-after={resp.headers.get('retry-after')})"
+                )
+                return False
             logger.warning(f"webhook failed status={resp.status_code} body={resp.text[:200]}")
             return False
     except Exception as e:
