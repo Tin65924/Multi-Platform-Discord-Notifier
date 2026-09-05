@@ -90,10 +90,10 @@ if _ssl_mode is None and _is_neon:
     _ssl_mode = "require"  # Neon refuses unencrypted connections
 _engine_kw: dict = {"echo": False, "future": True}
 if _is_pg:
-    from sqlalchemy.pool import QueuePool
+    from sqlalchemy.pool import AsyncAdaptedQueuePool
 
     _engine_kw.update(
-        poolclass=QueuePool,
+        poolclass=AsyncAdaptedQueuePool,
         pool_size=5,
         max_overflow=2,
         pool_timeout=30,
