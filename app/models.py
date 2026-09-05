@@ -87,3 +87,23 @@ class Subscription(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class LiveSession(Base):
+    """One detected live session per row — the analytics source of truth.
+
+    A session is NOT a notification: cooldown-skipped lives still open rows.
+    Open rows (ended_at NULL) mean currently live. Created by create_all on
+    fresh and existing DBs alike — no migration statements needed.
+    """
+
+    __tablename__ = "live_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    subscription_id: Mapped[int] = mapped_column(nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(String(16), nullable=False, default="tiktok")
+    handle: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    room_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    notified: Mapped[bool] = mapped_column(Boolean, default=False)

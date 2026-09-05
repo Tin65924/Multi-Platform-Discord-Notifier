@@ -7,7 +7,7 @@ from sqlalchemy import select, or_
 
 from .config import get_settings
 from .db import async_session
-from .models import Subscription, GlobalSettings
+from .models import Subscription, GlobalSettings, LiveSession
 from .tiktok import checker
 from .webhook import build_embed, display_account, resolve_webhook_cfg, send_webhook
 from .kick import checker as kick_checker
@@ -64,6 +64,45 @@ def _aware(dt):
         return None
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
+async def _open_session(session, sub, room_id: str, now):
+    """Get-or-create the open session row for this live. Restart-safe.
+
+    Same room still open -> reuse (no duplicates). Different room open
+    (e.g. fallback id -> real id) -> close the old one, open a new one.
+    """
+    res = await session.execute(
+        select(LiveSession).where(
+            LiveSession.subscription_id == sub.id,
+            LiveSession.ended_at.is_(None),
+        )
+    )
+    for o in res.scalars().all():
+        if o.room_id == room_id:
+            return o
+        o.ended_at = now
+    row = LiveSession(
+        subscription_id=sub.id,
+        platform=sub.platform or "tiktok",
+        handle=sub.tiktok_username,
+        room_id=room_id,
+        started_at=now,
+    )
+    session.add(row)
+    return row
+
+
+async def _close_open_sessions(session, sub_id: int, now):
+    """Stamp ended_at on any open rows. Idempotent — safe on every check."""
+    res = await session.execute(
+        select(LiveSession).where(
+            LiveSession.subscription_id == sub_id,
+            LiveSession.ended_at.is_(None),
+        )
+    )
+    for o in res.scalars().all():
+        o.ended_at = now
+
+
 async def get_global_settings():
     async with async_session() as session:
         gs = await session.get(GlobalSettings, 1)
@@ -112,6 +151,7 @@ async def poll_once():
                 room_id = live_info.room_id or f"live-{username}"
                 if _last_room_cache.get("tt:" + username) == room_id:
                     sub.is_live = True  # still live — only the notification is skipped
+                    await _open_session(session, sub, room_id, now)
                     await session.commit()
                     await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                     continue
@@ -119,6 +159,7 @@ async def poll_once():
                     if (now - _aware(sub.last_notified_at)) < timedelta(seconds=900):
                         _last_room_cache["tt:" + username] = room_id
                         sub.is_live = True  # still live — only the notification is skipped
+                        await _open_session(session, sub, room_id, now)
                         await session.commit()
                         await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                         continue
@@ -134,17 +175,20 @@ async def poll_once():
                     discord_username=sub.discord_username,
                     discord_user_id=sub.discord_user_id,
                 )
+                sess_row = await _open_session(session, sub, room_id, now)
                 ok = await send_webhook(webhook_url, payload, timeout=settings.WEBHOOK_TIMEOUT_SECONDS)
                 if ok:
                     sub.last_room_id = room_id
                     sub.last_notified_at = now
                     sub.last_live_at = now
                     sub.is_live = True
+                    sess_row.notified = True
                     notified += 1
                     _last_room_cache["tt:" + username] = room_id
                     logger.info(f"notified @{username}")
             else:
                 sub.is_live = False
+                await _close_open_sessions(session, sub.id, now)
 
             await session.commit()
             await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
@@ -204,6 +248,7 @@ async def poll_youtube():
                 room_id = live_info.room_id or f"live-yt-{handle}"
                 if _last_room_cache.get("yt:" + handle) == room_id:
                     sub.is_live = True  # still live — only the notification is skipped
+                    await _open_session(session, sub, room_id, now)
                     await session.commit()
                     await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                     continue
@@ -211,6 +256,7 @@ async def poll_youtube():
                     if (now - _aware(sub.last_notified_at)) < timedelta(seconds=900):
                         _last_room_cache["yt:" + handle] = room_id
                         sub.is_live = True  # still live — only the notification is skipped
+                        await _open_session(session, sub, room_id, now)
                         await session.commit()
                         await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                         continue
@@ -227,17 +273,20 @@ async def poll_youtube():
                     discord_user_id=sub.discord_user_id,
                     platform="youtube",
                 )
+                sess_row = await _open_session(session, sub, room_id, now)
                 ok = await send_webhook(webhook_url, payload, timeout=settings.WEBHOOK_TIMEOUT_SECONDS)
                 if ok:
                     sub.last_room_id = room_id
                     sub.last_notified_at = now
                     sub.last_live_at = now
                     sub.is_live = True
+                    sess_row.notified = True
                     notified += 1
                     _last_room_cache["yt:" + handle] = room_id
                     logger.info(f"notified yt {disp}")
             else:
                 sub.is_live = False
+                await _close_open_sessions(session, sub.id, now)
 
             await session.commit()
             await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
@@ -302,6 +351,7 @@ async def poll_kick():
                 room_id = live_info.room_id or f"live-kk-{handle}"
                 if _last_room_cache.get("kk:" + handle) == room_id:
                     sub.is_live = True  # still live — only the notification is skipped
+                    await _open_session(session, sub, room_id, now)
                     await session.commit()
                     await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                     continue
@@ -309,6 +359,7 @@ async def poll_kick():
                     if (now - _aware(sub.last_notified_at)) < timedelta(seconds=900):
                         _last_room_cache["kk:" + handle] = room_id
                         sub.is_live = True  # still live — only the notification is skipped
+                        await _open_session(session, sub, room_id, now)
                         await session.commit()
                         await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                         continue
@@ -325,17 +376,20 @@ async def poll_kick():
                     discord_user_id=sub.discord_user_id,
                     platform="kick",
                 )
+                sess_row = await _open_session(session, sub, room_id, now)
                 ok = await send_webhook(webhook_url, payload, timeout=settings.WEBHOOK_TIMEOUT_SECONDS)
                 if ok:
                     sub.last_room_id = room_id
                     sub.last_notified_at = now
                     sub.last_live_at = now
                     sub.is_live = True
+                    sess_row.notified = True
                     notified += 1
                     _last_room_cache["kk:" + handle] = room_id
                     logger.info(f"notified kick {disp}")
             else:
                 sub.is_live = False
+                await _close_open_sessions(session, sub.id, now)
 
             await session.commit()
             await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)

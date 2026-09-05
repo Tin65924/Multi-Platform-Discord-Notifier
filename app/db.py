@@ -252,6 +252,26 @@ async def init_db():
     except Exception as e:
         logger.warning(f"audit prune skipped err={type(e).__name__}")
 
+    # Retention: closed live sessions older than 180 days go; open rows
+    # (currently live) are kept regardless of age.
+    try:
+        from datetime import datetime, timedelta, timezone
+
+        from .models import LiveSession
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=180)
+        async with async_session() as session:
+            await session.execute(
+                text(
+                    "DELETE FROM live_sessions "
+                    "WHERE ended_at IS NOT NULL AND ended_at < :cutoff"
+                ),
+                {"cutoff": cutoff},
+            )
+            await session.commit()
+    except Exception as e:
+        logger.warning(f"sessions prune skipped err={type(e).__name__}")
+
     # Bootstrap superadmin on first run
     async with async_session() as session:
         from sqlalchemy import select

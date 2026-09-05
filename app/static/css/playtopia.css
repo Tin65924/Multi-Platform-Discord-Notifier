@@ -309,6 +309,20 @@ code { background: #041e25; border: 1px solid var(--pt-line-strong); border-radi
 @keyframes pt-pulse { 0%,100% { box-shadow: 0 0 0 0 #3fa45b66; } 50% { box-shadow: 0 0 0 5px #3fa45b00; } }
 .pill-off { background: #1b3a63; color: var(--pt-muted); }
 .pill-role { background: #2a3f5f; color: #bcd0ff; }
+/* analytics status tiers */
+.pill-st-active { background: #1f7a3d; color: #fff; }
+.pill-st-soft { background: #8a6d1a; color: #fff; }
+.pill-st-hard { background: #a03a1a; color: #fff; }
+.pill-st-terminate { background: #b00020; color: #fff; }
+/* analytics KPI cards + daily bars */
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-top: 12px; }
+.kpi { background: var(--pt-panel); border: 1px solid var(--pt-line); border-radius: 4px; padding: 10px 12px; }
+.kpi__v { font-size: 20px; font-weight: 700; color: #fff; }
+.kpi__k { font-size: 11px; color: var(--pt-muted); }
+.kpi-bars { display: flex; gap: 4px; align-items: flex-end; margin-top: 12px; min-height: 74px; }
+.kpi-bar { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; height: 70px; justify-content: flex-end; }
+.kpi-bar__fill { width: 100%; max-width: 22px; background: var(--pt-gold); border-radius: 2px 2px 0 0; min-height: 2px; }
+.kpi-bar__d { font-size: 9px; color: var(--pt-faint); }
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; }
 .stylebox { margin: 12px 0 0; padding: 12px; border: 1px solid var(--pt-line-strong); border-radius: 4px; background: var(--pt-panel); display: grid; gap: 10px; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
