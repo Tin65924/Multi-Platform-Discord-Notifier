@@ -104,9 +104,14 @@ async def _close_open_sessions(session, sub_id: int, now):
 
 
 async def get_global_settings():
-    async with async_session() as session:
+    from .db import open_session
+
+    session = await open_session()
+    try:
         gs = await session.get(GlobalSettings, 1)
         return resolve_webhook_cfg(gs)
+    finally:
+        await session.close()
 
 async def poll_once():
     # Snapshot ids/handles in one short session; every creator below gets

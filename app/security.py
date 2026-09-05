@@ -40,16 +40,20 @@ async def log_audit(actor: str, action: str, detail: str | None = None):
 
 async def get_current_user(request: Request):
     from .models import User
+    from .db import open_session
 
     uid = request.session.get(SESSION_KEY)
     if not uid:
         return None
-    async with async_session() as session:
+    session = await open_session()
+    try:
         user = await session.get(User, int(uid))
         if not user or not user.is_active:
             return None
         # detach values before session closes
         return {"id": user.id, "username": user.username, "role": user.role}
+    finally:
+        await session.close()
 
 
 async def require_login(request: Request):

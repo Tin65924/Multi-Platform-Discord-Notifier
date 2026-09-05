@@ -1,4 +1,7 @@
+import asyncio
+
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.pool import NullPool
@@ -91,6 +94,9 @@ if _is_pg and _ssl_mode and _ssl_mode != "disable":
     import ssl as _ssl
 
     _engine_kw["connect_args"] = {"ssl": _ssl.create_default_context()}
+if _is_pg:
+    # Fail fast on hung connects (Neon cold starts) instead of hanging 60s+.
+    _engine_kw.setdefault("connect_args", {}).update({"timeout": 20})
 
 logger.info(f"db dialect: {DB_URL.split(':')[0] if ':' in DB_URL else 'unknown'} "
             f"pool={'null' if _is_neon else 'sized'} ssl={_ssl_mode or 'off'}")
@@ -104,8 +110,36 @@ class Base(DeclarativeBase):
 
 
 async def get_session():
-    async with async_session() as session:
+    session = await open_session()
+    try:
         yield session
+    finally:
+        await session.close()
+
+
+# Transient connect failures (Neon waking from sleep). Retried only here,
+# at acquisition — never around business logic (that could double-apply).
+_RETRYABLE = (DBAPIError, TimeoutError, OSError)
+
+
+async def open_session(retries: int = 1) -> AsyncSession:
+    """Return a connected session, retrying once after a short wait.
+
+    Forces the handshake up front so callers fail fast here instead of
+    mid-query. Caller owns the session (close it when done).
+    """
+    last: Exception | None = None
+    for attempt in range(retries + 1):
+        session = async_session()
+        try:
+            await session.connection()
+            return session
+        except _RETRYABLE as e:
+            last = e
+            await session.close()
+            if attempt < retries:
+                await asyncio.sleep(3)
+    raise last  # type: ignore[misc]
 
 
 # Desired-state columns for pre-existing DBs (create_all only covers fresh DBs).
