@@ -503,7 +503,7 @@ function renderDefaultsPreview() {
         <div class="discord-embed__bar" style="background:${color}"></div>
         <div class="discord-embed__main">
           <div class="discord-embed__author">${escapeHtml(account)}</div>
-          <div class="discord-embed__desc">${escapeHtml(wildPreview(sample))}</div>
+          <div class="discord-embed__desc"><a href="${escapeHtml(link)}" target="_blank">${escapeHtml(wildPreview(sample))}</a></div>
           ${imgUrl ? `<img src="${escapeHtml(imgUrl)}" class="discord-embed__img" onerror="this.remove()">` : ''}
           <div class="discord-embed__footer">Forest Watcher &bull; TikTok</div>
         </div>

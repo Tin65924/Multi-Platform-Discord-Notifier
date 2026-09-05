@@ -189,7 +189,7 @@ def build_embed(
     )
     embed: dict = {
         "author": {"name": account},
-        "description": random_wild_line(wild_name),
+        "description": f"[{random_wild_line(wild_name)}]({link})",
         "color": parse_color(color),
         "url": link,
         "timestamp": datetime.now(timezone.utc).isoformat(),
