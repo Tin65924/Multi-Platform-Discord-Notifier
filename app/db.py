@@ -4,8 +4,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy.pool import NullPool
 import logging
+import os
 from .config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -79,17 +79,27 @@ def _sanitize_query(url: str) -> tuple[str, str | None]:
 DB_URL = normalize_db_url(settings.DATABASE_URL)
 
 # Render free 512MB + Neon free (max ~20 connections): keep the pool tiny.
-# NullPool for serverless Neon (avoids holding idle conns across Render sleep).
+# Small QueuePool (NOT NullPool): every checkout on NullPool is a fresh
+# TCP+TLS handshake, and per-connection native churn was our prime OOM
+# suspect. 5 steady connections also ride out Neon cold starts better.
+# (Neon never sleeps here anyway — sweeps query every ~70s.)
 _is_pg = DB_URL.startswith("postgresql")
 _is_neon = "neon.tech" in DB_URL
 DB_URL, _ssl_mode = _sanitize_query(DB_URL)
 if _ssl_mode is None and _is_neon:
     _ssl_mode = "require"  # Neon refuses unencrypted connections
 _engine_kw: dict = {"echo": False, "future": True}
-if _is_neon:
-    _engine_kw["poolclass"] = NullPool
-elif _is_pg:
-    _engine_kw.update(pool_size=5, max_overflow=0)
+if _is_pg:
+    from sqlalchemy.pool import QueuePool
+
+    _engine_kw.update(
+        poolclass=QueuePool,
+        pool_size=5,
+        max_overflow=2,
+        pool_timeout=30,
+        pool_recycle=600,
+        pool_pre_ping=True,  # drop dead conns after Neon blips instead of failing on them
+    )
 if _is_pg and _ssl_mode and _ssl_mode != "disable":
     import ssl as _ssl
 
@@ -252,6 +262,10 @@ async def init_db():
         else:
             await _migrate_sqlite(conn)
     logger.info("db initialized")
+    logger.info(
+        f"env MALLOC_MMAP_THRESHOLD_={os.environ.get('MALLOC_MMAP_THRESHOLD_')} "
+        f"pool={type(engine.pool).__name__}"
+    )
 
     # One-time normalization: stock message templates from earlier formats
     # move to the current one ("{discord} is LIVE!"). Only rows still on an
