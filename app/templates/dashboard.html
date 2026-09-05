@@ -492,6 +492,7 @@ function renderDefaultsPreview() {
   const ping = everyone ? '@everyone' : (roleId ? '<@&' + roleId + '>' : '');
   let content = tpl.split('{discord}').join(account).split('{account}').join(account)
     .split('{link}').join(link).split('{ping_role}').join(ping);
+  if (ping && !tpl.includes('{ping_role}') && !content.includes(ping)) content = (ping + '\n' + content).trim();
   content = content.trim().slice(0, 2000) || (account + ' is LIVE!');
   let color = (document.getElementById('defColor').value || '#FF0050').toUpperCase();
   if (!/^#[0-9A-F]{6}$/.test(color)) color = '#FF0050';

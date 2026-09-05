@@ -181,6 +181,10 @@ def build_embed(
     ).strip()[:2000]
     if not content:
         content = f"{discord} is LIVE!"
+    # Ping @everyone / role automatically when configured, unless the
+    # template already places {ping_role} itself (or already contains it).
+    if ping_mention and "{ping_role}" not in (message or "") and ping_mention not in content:
+        content = f"{ping_mention}\n{content}".strip()[:2000]
 
     image = resolve_image(
         image_url,
