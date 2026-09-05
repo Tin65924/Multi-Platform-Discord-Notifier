@@ -85,11 +85,9 @@ async def dashboard(request: Request):
     return templates.TemplateResponse("dashboard.html", {"request": request})
 
 
-@app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard2(request: Request):
-    if not await get_current_user(request):
-        return RedirectResponse(url="/login", status_code=302)
-    return templates.TemplateResponse("dashboard.html", {"request": request})
+@app.get("/dashboard")
+async def dashboard2():
+    return RedirectResponse(url="/", status_code=302)
 
 
 if (BASE_DIR / "static").exists():

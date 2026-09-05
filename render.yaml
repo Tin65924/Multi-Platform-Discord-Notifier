@@ -12,8 +12,6 @@ services:
         sync: false # Neon URL with ?ssl=require (Neon dashboard -> copy)
       - key: APP_SECRET_KEY
         generateValue: true
-      - key: CRON_SECRET
-        generateValue: true # cron-job.org sends it as ?secret= or X-Cron-Secret on /api/cron/poll
       - key: SUPERADMIN_USER
         value: superadmin
       - key: SUPERADMIN_PASS
@@ -27,8 +25,6 @@ services:
       - key: PING_ROLE_ID
         sync: false
       - key: EMBED_IMAGE_URL
-        sync: false
-      - key: PUBLIC_BASE_URL
         sync: false
       - key: TIKTOK_SESSION_ID
         sync: false # tiktok.com browser cookie "sessionid" — fewer flags, age-restricted lives

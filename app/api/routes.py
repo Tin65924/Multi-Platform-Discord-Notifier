@@ -14,7 +14,6 @@ from ..schemas import (
 from ..security import (
     require_admin,
     require_superadmin,
-    require_cron_or_admin,
     verify_password,
     hash_password,
     log_audit,
@@ -22,9 +21,9 @@ from ..security import (
     get_current_user,
 )
 from ..tiktok import checker
-from ..webhook import build_embed, send_webhook, platform_label, display_account
+from ..webhook import build_embed, send_webhook, platform_label, display_account, resolve_webhook_cfg
 from ..wildlines import WILD_LINES
-from ..poller import poll_once, poll_youtube, poll_kick
+from ..poller import poll_cycle_try
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -32,13 +31,7 @@ settings = get_settings()
 
 
 def _webhook_cfg(gs: GlobalSettings | None):
-    url = (gs.webhook_url if gs and gs.webhook_url else None) or settings.DASHBOARD_WEBHOOK_URL or None
-    ping = (gs.ping_role_id if gs and gs.ping_role_id else None) or (settings.PING_ROLE_ID or None)
-    msg = (gs.custom_message if gs and gs.custom_message else None) or settings.CUSTOM_MESSAGE
-    everyone = bool(gs.ping_everyone) if gs and gs.ping_everyone is not None else True
-    image = (gs.embed_image_url if gs and gs.embed_image_url else None) or (settings.EMBED_IMAGE_URL or None)
-    color = (gs.embed_color if gs and gs.embed_color else None) or "#FF0050"
-    return url, ping, msg, everyone, image, color
+    return resolve_webhook_cfg(gs)
 
 
 def _style_for(sub: Subscription, image: str | None, color: str) -> dict:
@@ -212,11 +205,6 @@ async def put_settings(payload: GlobalSettingsIn, session: AsyncSession = Depend
     await session.commit()
     await log_audit(user["username"], "webhook.update", "global defaults saved")
     return {"msg": "Settings saved"}
-
-
-@router.post("/settings")
-async def post_settings(payload: GlobalSettingsIn, session: AsyncSession = Depends(get_session), user=Depends(require_admin)):
-    return await put_settings(payload, session, user)
 
 
 # --- Subscriptions (admin + superadmin) ---
@@ -426,42 +414,23 @@ async def check_now(sub_id: int, session: AsyncSession = Depends(get_session), u
         return {"is_live": info.is_live, "room_id": info.room_id}
     if plat != "tiktok":
         raise HTTPException(400, f"Live checks for {platform_label(sub.platform)} aren't supported yet — creator stored for later")
-    info = await checker.is_live(sub.tiktok_username)
-    return {"is_live": info.is_live, "room_id": info.room_id}
-
-
-@router.get("/debug/tiktok")
-async def debug_tiktok(username: str, session: AsyncSession = Depends(get_session), user=Depends(require_admin)):
-    """Diagnose live-status detection for a user."""
     from ..tiktok import _settings as _tt_settings
 
-    clean = username.strip().lstrip("@").lower()
-    info = await checker.is_live(clean)
+    info = await checker.is_live(sub.tiktok_username)
     return {
-        "username": clean,
-        "session_mode": bool(getattr(_tt_settings, "TIKTOK_SESSION_ID", "") or ""),
         "is_live": info.is_live,
         "room_id": info.room_id,
+        "session_mode": bool(getattr(_tt_settings, "TIKTOK_SESSION_ID", "") or ""),
     }
 
 
 @router.post("/cron/poll")
-async def cron_poll(request: Request, user=Depends(require_cron_or_admin)):
-    base = await poll_once()
-    yt = await poll_youtube()
-    kk = await poll_kick()
-    return {
-        "checked": base["checked"] + yt["checked"] + kk["checked"],
-        "notified": base["notified"] + yt["notified"] + kk["notified"],
-    }
+async def cron_poll():
+    """Open trigger (no secret): runs a sweep unless one is already running."""
+    return await poll_cycle_try()
 
 
 @router.get("/cron/poll")
-async def cron_poll_get(request: Request, user=Depends(require_cron_or_admin)):
-    base = await poll_once()
-    yt = await poll_youtube()
-    kk = await poll_kick()
-    return {
-        "checked": base["checked"] + yt["checked"] + kk["checked"],
-        "notified": base["notified"] + yt["notified"] + kk["notified"],
-    }
+async def cron_poll_get():
+    """Open trigger (no secret): runs a sweep unless one is already running."""
+    return await poll_cycle_try()

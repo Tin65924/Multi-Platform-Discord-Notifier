@@ -1,14 +1,9 @@
 import hashlib
 import hmac
 import secrets
-from fastapi import Depends, HTTPException, Request
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import HTTPException, Request
 
-from .config import get_settings
 from .db import async_session
-
-settings = get_settings()
 
 SESSION_KEY = "uid"
 
@@ -78,32 +73,4 @@ async def require_superadmin(request: Request):
     return user
 
 
-# Backwards-compat alias (old basic-auth dep name used across routes)
-async def verify_basic_auth(request: Request):
-    return await require_admin(request)
 
-
-def verify_cron_secret(request: Request):
-    """External cron (cron-job.org) authenticates with a shared secret.
-
-    Accepts `X-Cron-Secret` header or `?secret=` query param, compared in
-    constant time. A random CRON_SECRET is generated per process unless set,
-    so unset-in-prod cron calls fail closed (403) instead of passing open.
-    """
-    cron = request.headers.get("x-cron-secret") or request.query_params.get("secret")
-    if not hmac.compare_digest(cron or "", settings.CRON_SECRET):
-        raise HTTPException(status_code=403, detail="Invalid cron secret")
-    return True
-
-
-async def require_cron_or_admin(request: Request):
-    """Cron trigger auth: admin session OR valid cron secret.
-
-    Scoped to poll triggers only — never use on data routes. The cron
-    identity can start a sweep and nothing else.
-    """
-    user = await get_current_user(request)
-    if user and user["role"] in ("admin", "superadmin"):
-        return user
-    verify_cron_secret(request)
-    return {"id": 0, "username": "cron", "role": "cron"}

@@ -11,14 +11,14 @@ Multi-platform LIVE → Discord notifier (TikTok, YouTube, Kick; Twitch stored, 
    - Health: `/health`
 3. Env vars in Render (see `render.yaml` for the full list):
    - `DATABASE_URL` = Neon `postgresql://...?ssl=require`
-   - `APP_SECRET_KEY` / `CRON_SECRET` = Generate
+   - `APP_SECRET_KEY` = Generate
    - `SUPERADMIN_USER=superadmin`, `SUPERADMIN_PASS` = Generate (copy it — first login)
    - Platform keys as needed: `KICK_CLIENT_ID/SECRET`, `TWITCH_CLIENT_ID/SECRET`, `YOUTUBE_API_KEY`, `TIKTOK_SESSION_ID`
    - Leave `TT_COOKIE_PROVIDER=off` on Render (no browsers installed)
 4. Deploy -> open `https://your-app.onrender.com/` -> log in as superadmin -> Defaults tab -> save webhook.
 5. Keep alive + force sweeps (cron-job.org):
    - `GET https://your-app.onrender.com/health` every 14 min (no auth)
-   - `GET https://your-app.onrender.com/api/cron/poll?secret=YOUR_CRON_SECRET` every 5 min (triggers a sweep; header `X-Cron-Secret` works too)
+   - `GET https://your-app.onrender.com/api/cron/poll` every 5 min (triggers a sweep, no secret needed; skips if a sweep is already running)
 
 First deploy runs DB migrations automatically (`init_db`): creates tables, backfills the `platform` column, and swaps the handle-unique index for the composite `(platform, handle)` one. Safe to redeploy — all steps are idempotent.
 
@@ -35,7 +35,7 @@ uvicorn app.main:app --reload
 ## Security
 
 - No secrets in repo, only `.env.example` (`.env` is gitignored)
-- Session login (admin/superadmin roles, pbkdf2 hashes); `/api/cron/poll` needs admin session OR `CRON_SECRET`
+- Session login (admin/superadmin roles, pbkdf2 hashes); `/api/cron/poll` is an open trigger that skips when a sweep is already running
 - Webhook URL validated by regex; creator handles normalized per platform; SQL via ORM
 - Logs redacted (webhook URLs, DB URL) — see `app/logging_config.py`
 - Platform secrets are server-side only, never sent to the frontend

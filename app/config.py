@@ -9,9 +9,6 @@ class Settings(BaseSettings):
     # DB - Neon Postgres in prod requires ?ssl=require (see render.yaml)
     DATABASE_URL: str = "sqlite+aiosqlite:///./playtopia.db"
     APP_SECRET_KEY: str = secrets.token_urlsafe(32)
-    # External cron (cron-job.org) authenticates with this on /api/cron/poll.
-    # Random per process unless set — MUST be set in prod or cron calls 403.
-    CRON_SECRET: str = secrets.token_urlsafe(32)
     # Legacy single-user basic auth (unused now that session login exists, kept for compat)
     DASHBOARD_USER: str = "admin"
     DASHBOARD_PASS: str = ""  # leave empty for local no-auth
@@ -43,8 +40,6 @@ class Settings(BaseSettings):
     KICK_CLIENT_SECRET: str = ""
     YOUTUBE_API_KEY: str = ""
     TT_COOKIE_RETRY_SECONDS: int = 1800  # backoff after a failed mint
-    # Base URL of this app if publicly reachable + app/static/cover.jpg exists
-    PUBLIC_BASE_URL: str = ""
     MAX_CREATORS: int = 60  # Render Free comfort cap across all platforms
     CHECK_INTERVAL_SECONDS: int = 45  # gap between sweeps (prod: 3-platform sweep)
     CHECK_JITTER_SECONDS: int = 10

@@ -49,6 +49,11 @@ def _sanitize_query(url: str) -> tuple[str, str | None]:
     from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
     parts = urlsplit(url)
+    if not parts.netloc:
+        # SQLite-style URLs have no authority section — urlunsplit would
+        # collapse their leading slashes into an unparseable URL. Query
+        # sanitizing only applies to server DBs (asyncpg) anyway.
+        return url, None
     q = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)]
     mode = None
     kept = []
@@ -148,6 +153,8 @@ def postgres_migration_statements() -> list:
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_subscriptions_platform_username "
         "ON subscriptions (platform, tiktok_username)"
     )
+    # Retired tracking column (never read, writes removed) — drop if present.
+    stmts.append("ALTER TABLE subscriptions DROP COLUMN IF EXISTS consecutive_failures")
     return stmts
 
 
@@ -182,6 +189,16 @@ async def _migrate_sqlite(conn):
             await conn.execute(text("CREATE INDEX ix_subscriptions_platform_username ON subscriptions (platform, tiktok_username)"))
         if "uq_subscriptions_platform_username" not in idx:
             await conn.execute(text("CREATE UNIQUE INDEX uq_subscriptions_platform_username ON subscriptions (platform, tiktok_username)"))
+    except Exception:
+        pass
+    # Retired tracking column (never read, writes removed) — drop if present.
+    try:
+        names = {
+            c[1]
+            for c in (await conn.execute(text("PRAGMA table_info(subscriptions)"))).fetchall()
+        }
+        if "consecutive_failures" in names:
+            await conn.execute(text("ALTER TABLE subscriptions DROP COLUMN consecutive_failures"))
     except Exception:
         pass
 
@@ -220,6 +237,20 @@ async def init_db():
                 logger.info("db normalized stock custom_message to forest version")
         except Exception as e:
             logger.warning(f"custom_message normalize skipped err={type(e).__name__}")
+
+    # Retention: audit_log is append-only — keep the newest 5000 rows.
+    # Runs every boot (cheap, indexed); dialect-safe for PG + SQLite.
+    try:
+        async with async_session() as session:
+            await session.execute(
+                text(
+                    "DELETE FROM audit_log WHERE id NOT IN "
+                    "(SELECT id FROM audit_log ORDER BY id DESC LIMIT 5000)"
+                )
+            )
+            await session.commit()
+    except Exception as e:
+        logger.warning(f"audit prune skipped err={type(e).__name__}")
 
     # Bootstrap superadmin on first run
     async with async_session() as session:

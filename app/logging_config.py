@@ -7,7 +7,6 @@ REDACT_PATTERNS = [
     (re.compile(r"postgresql\+asyncpg://[^\s]+"), "postgresql+asyncpg://***REDACTED***"),
     (re.compile(r"DATABASE_URL[^\n]+"), "DATABASE_URL=***REDACTED***"),
     (re.compile(r"APP_SECRET_KEY[^\n]+"), "APP_SECRET_KEY=***REDACTED***"),
-    (re.compile(r"CRON_SECRET[^\n]+"), "CRON_SECRET=***REDACTED***"),
 ]
 
 class RedactingFormatter(logging.Formatter):

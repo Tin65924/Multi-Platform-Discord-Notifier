@@ -18,6 +18,21 @@
  * Discord's status code, body, and retry-after header pass straight through.
  */
 
+/* Constant-time secret compare (SHA-256 digests, no early exit). */
+async function secretsEqual(a, b) {
+  const enc = new TextEncoder();
+  const [da, db] = await Promise.all([
+    crypto.subtle.digest("SHA-256", enc.encode("relay:" + a)),
+    crypto.subtle.digest("SHA-256", enc.encode("relay:" + b)),
+  ]);
+  const xa = new Uint8Array(da);
+  const xb = new Uint8Array(db);
+  let diff = xa.length ^ xb.length;
+  const n = Math.max(xa.length, xb.length);
+  for (let i = 0; i < n; i++) diff |= xa[i % xa.length] ^ xb[i % xb.length];
+  return diff === 0;
+}
+
 export default {
   async fetch(request, env) {
     if (request.method !== "POST") {
@@ -31,7 +46,7 @@ export default {
     }
     const got = String(body.secret ?? "").trim();
     const want = String(env.RELAY_SECRET ?? "").trim();
-    if (!want || got !== want) {
+    if (!want || !(await secretsEqual(got, want))) {
       return new Response("Forbidden", { status: 403 });
     }
     if (!env.DISCORD_WEBHOOK_URL || !env.DISCORD_WEBHOOK_URL.includes("discord.com/api/webhooks")) {

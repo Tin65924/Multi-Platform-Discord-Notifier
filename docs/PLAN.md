@@ -10,7 +10,7 @@ In:
 - Track creators per platform (TikTok @username, YouTube @handle/channel, Twitch login, Kick slug — link or handle accepted, normalized per platform), detect LIVE start, POST embed to 1 Discord channel webhook
 - Dashboard: platform filter card, creator cards grid, EDIT (modal) / PREVIEW (Discord render + raw JSON) / REMOVE / TEST / FORCE per card, global defaults, admins + audit log
 - Deduplicate: one ping per live session (session id + 15 min cooldown); inconclusive checks preserve state
-- External cron trigger: `/api/cron/poll` with admin session OR `CRON_SECRET`
+- External cron trigger: `/api/cron/poll`, open (no secret), skips when a sweep is already running
 
 Out:
 - Video uploads, chat/gifts/viewer tracking, multi-server, Discord bot/slash commands, paid APIs
@@ -208,7 +208,7 @@ Formula: `cycle = creators x (check_latency + PER_CHECK_SLEEP) + CHECK_INTERVAL`
 2. SQLite/Neon + dedup (`last_room_id`, cooldown, `_last_room_cache`)
 3. Dashboard: settings card once + add-by-link/username + Test/Remove
 4. Hardening: input validators (`app/schemas.py`), session login + roles (`app/security.py`), cron secret for external triggers, redacted logs (`app/logging_config.py`), `/health`
-5. Deploy prod: GitHub → Render → env (`DATABASE_URL`, `SUPERADMIN_*`, `CRON_SECRET`, platform keys) → cron-job.org (`/health` + `/api/cron/poll?secret=`)
+5. Deploy prod: GitHub → Render → env (`DATABASE_URL`, `SUPERADMIN_*`, platform keys) → cron-job.org (`/health` + `/api/cron/poll`)
 
 ## 7. Test plan
 

@@ -1,6 +1,5 @@
 import logging
 import time
-from pathlib import Path
 
 import httpx
 from datetime import datetime, timezone
@@ -32,16 +31,36 @@ except Exception:
 HARDCODED_IMAGE_URL = ""
 HARDCODED_COLOR = "#FF0050"  # TikTok pink
 
-STATIC_COVER_PATH = Path(__file__).resolve().parent / "static" / "cover.jpg"
 
-
-def resolve_image(setting_url: str | None, env_url: str = "", public_base: str = "") -> str | None:
+def resolve_image(setting_url: str | None, env_url: str = "") -> str | None:
     for candidate in (setting_url, env_url, HARDCODED_IMAGE_URL):
         if candidate and candidate.strip().startswith("http"):
             return candidate.strip()
-    if public_base and STATIC_COVER_PATH.exists():
-        return public_base.rstrip("/") + "/static/cover.jpg"
     return None
+
+
+def resolve_webhook_cfg(gs) -> tuple:
+    """Global webhook resolution from a GlobalSettings row (or None).
+
+    Single source of truth for the dashboard and the poller — precedence
+    per field: stored row > env > hardcoded default.
+    Returns (url, ping_role_id, message, ping_everyone, image_url, color).
+    """
+    url = (gs.webhook_url if gs and gs.webhook_url else None) or (
+        getattr(_settings, "DASHBOARD_WEBHOOK_URL", "") or None
+    )
+    ping = (gs.ping_role_id if gs and gs.ping_role_id else None) or (
+        getattr(_settings, "PING_ROLE_ID", "") or None
+    )
+    msg = (gs.custom_message if gs and gs.custom_message else None) or getattr(
+        _settings, "CUSTOM_MESSAGE", ""
+    ) or "{discord} is LIVE!"
+    everyone = bool(gs.ping_everyone) if gs and gs.ping_everyone is not None else True
+    image = (gs.embed_image_url if gs and gs.embed_image_url else None) or (
+        getattr(_settings, "EMBED_IMAGE_URL", "") or None
+    )
+    color = (gs.embed_color if gs and gs.embed_color else None) or "#FF0050"
+    return url, ping, msg, everyone, image, color
 
 
 def parse_color(value: str | None) -> int:
@@ -53,14 +72,6 @@ def parse_color(value: str | None) -> int:
     except ValueError:
         pass
     return int(HARDCODED_COLOR.lstrip("#"), 16)
-
-
-def resolve_color(value: str | None) -> tuple[str, int]:
-    """Return (normalized_hex, int) for storage + sending."""
-    raw = (value or "").strip()
-    if not raw.startswith("#"):
-        raw = "#" + raw
-    return raw.upper() if len(raw) == 7 else HARDCODED_COLOR, parse_color(raw)
 
 
 from .wildlines import random_wild_line
@@ -189,7 +200,6 @@ def build_embed(
     image = resolve_image(
         image_url,
         env_url=getattr(_settings, "EMBED_IMAGE_URL", "") or "",
-        public_base=getattr(_settings, "PUBLIC_BASE_URL", "") or "",
     )
     embed: dict = {
         "author": {"name": account},
