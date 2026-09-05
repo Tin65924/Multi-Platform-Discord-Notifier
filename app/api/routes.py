@@ -23,7 +23,7 @@ from ..security import (
 from ..tiktok import checker
 from ..webhook import build_embed, send_webhook, platform_label, display_account, resolve_webhook_cfg
 from ..wildlines import WILD_LINES
-from ..poller import poll_cycle_try
+from ..poller import poll_cycle_try, rss_mb
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -388,6 +388,43 @@ async def payload_preview(sub_id: int, session: AsyncSession = Depends(get_sessi
     gs = await session.get(GlobalSettings, 1)
     _, ping, msg, everyone, image, color = _webhook_cfg(gs)
     return _payload_for(sub, msg, ping, everyone, image, color)
+
+
+@router.get("/debug/memory")
+async def debug_memory(trace: str = "", user=Depends(require_superadmin)):
+    """Memory telemetry (superadmin): RSS, GC stats, live tasks, optional tracemalloc.
+
+    ?trace=on starts allocation tracing (~5-10% overhead — short windows
+    only), ?trace=off stops it. Compare two snapshots' tops to find a leak.
+    """
+    import asyncio
+    import gc
+    import tracemalloc
+
+    out: dict = {
+        "rss_mb": rss_mb(),
+        "gc_counts": gc.get_count(),
+        "gc_garbage": len(gc.garbage),
+    }
+    try:
+        out["asyncio_tasks"] = len(asyncio.all_tasks())
+    except Exception:
+        out["asyncio_tasks"] = None
+    if trace == "on":
+        if not tracemalloc.is_tracing():
+            tracemalloc.start(10)
+            logger.warning("tracemalloc started via debug endpoint")
+        out["tracing"] = True
+    elif trace == "off":
+        if tracemalloc.is_tracing():
+            tracemalloc.stop()
+        out["tracing"] = False
+    else:
+        out["tracing"] = tracemalloc.is_tracing()
+    if tracemalloc.is_tracing():
+        snap = tracemalloc.take_snapshot()
+        out["top"] = [str(s) for s in snap.statistics("lineno")[:25]]
+    return out
 
 
 @router.get("/wildlines")

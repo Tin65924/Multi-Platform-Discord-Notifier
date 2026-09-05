@@ -105,10 +105,41 @@ class TikTokChecker:
                 return LiveInfo(is_live=False, username=clean)
             finally:
                 if client is not None:
-                    try:
-                        await client.close()
-                    except Exception:
-                        pass
+                    await _shutdown_client(client)
+
+
+async def _shutdown_client(client) -> None:
+    """Close everything a TikTokLiveClient holds.
+
+    client.close() only closes web._httpx — the signer's Euler SDK builds
+    its own sync + async httpx clients (own pools) that are otherwise never
+    closed, leaking connections on every check until OOM.
+    Private attrs are guarded: pinned TikTokLive==6.2.1, fail-safe on change.
+    """
+    try:
+        await client.close()
+    except Exception:
+        pass
+    try:
+        web = getattr(client, "web", None)
+        signer = getattr(web, "_tiktok_signer", None)
+        sdk = getattr(signer, "_sdk_client", None)
+        if sdk is None:
+            return
+        acli = getattr(sdk, "_async_client", None)
+        if acli is not None:
+            try:
+                await acli.aclose()
+            except Exception:
+                pass
+        cli = getattr(sdk, "_client", None)
+        if cli is not None:
+            try:
+                cli.close()
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 
 checker = TikTokChecker()

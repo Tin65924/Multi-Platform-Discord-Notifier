@@ -19,6 +19,16 @@ settings = get_settings()
 _last_room_cache: dict[str, str] = {}
 _is_running = False
 
+
+def rss_mb() -> float | None:
+    """Process peak RSS in MB (Linux). None where unsupported (local Windows)."""
+    try:
+        import resource
+
+        return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)
+    except Exception:
+        return None
+
 # One cycle at a time, process-wide: the loop and external cron triggers
 # share this. A trigger that finds a running cycle skips (busy) instead of
 # overlapping it (overlap caused double notifications + connection pileup).
@@ -416,7 +426,8 @@ async def poll_loop():
             result, yt, kk = await poll_cycle()
             logger.info(
                 f"poll sweep checked={result['checked']}+{yt['checked']}+{kk['checked']} "
-                f"notified={result['notified']}+{yt['notified']}+{kk['notified']}"
+                f"notified={result['notified']}+{yt['notified']}+{kk['notified']} "
+                f"rss={rss_mb()}MB"
             )
         except asyncio.CancelledError:
             break
