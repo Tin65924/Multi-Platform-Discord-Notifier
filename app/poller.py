@@ -21,13 +21,46 @@ _is_running = False
 
 
 def rss_mb() -> float | None:
-    """Process peak RSS in MB (Linux). None where unsupported (local Windows)."""
+    """Process peak RSS in MB (Linux). None where unsupported (local Windows).
+
+    NOTE: peak never decreases within a process — a flat line means "no new
+    highs", not "safe". Use rss_current_mb() for the safety margin.
+    """
     try:
         import resource
 
         return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)
     except Exception:
         return None
+
+
+def rss_current_mb() -> float | None:
+    """Current RSS in MB via /proc (Linux only). The real safety margin."""
+    try:
+        import os
+
+        with open("/proc/self/statm") as f:
+            resident_pages = int(f.read().split()[1])
+        return round(resident_pages * os.sysconf("SC_PAGE_SIZE") / 1e6, 1)
+    except Exception:
+        return None
+
+
+_last_rss: float | None = None
+
+
+def should_recycle(peak: float | None) -> bool:
+    """Recycle only while still climbing past the ceiling.
+
+    A stable-high peak (equilibrium) is left alone — restarting it would
+    loop forever. Strictly-greater means still growing toward the OOM line.
+    """
+    global _last_rss
+    if peak is None:
+        return False
+    climbing = _last_rss is not None and peak > _last_rss
+    _last_rss = peak
+    return climbing and peak > 450
 
 # One cycle at a time, process-wide: the loop and external cron triggers
 # share this. A trigger that finds a running cycle skips (busy) instead of
@@ -424,11 +457,20 @@ async def poll_loop():
             if len(_last_room_cache) > 500:
                 _last_room_cache.clear()
             result, yt, kk = await poll_cycle()
+            peak = rss_mb()
             logger.info(
                 f"poll sweep checked={result['checked']}+{yt['checked']}+{kk['checked']} "
                 f"notified={result['notified']}+{yt['notified']}+{kk['notified']} "
-                f"rss={rss_mb()}MB"
+                f"rss={peak}MB cur={rss_current_mb()}MB"
             )
+            if should_recycle(peak):
+                # Still climbing past the ceiling toward Render's 512MB kill
+                # line: exit cleanly between sweeps so Render restarts fresh.
+                # ~60s gap; the DB cooldown + session rows guard duplicates.
+                logger.warning(f"memory ceiling hit (peak {peak}MB) — recycling process")
+                import os as _os
+
+                _os._exit(0)
         except asyncio.CancelledError:
             break
         except Exception as e:

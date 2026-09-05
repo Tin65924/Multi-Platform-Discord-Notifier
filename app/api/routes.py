@@ -23,7 +23,7 @@ from ..security import (
 from ..tiktok import checker
 from ..webhook import build_embed, send_webhook, platform_label, display_account, resolve_webhook_cfg
 from ..wildlines import WILD_LINES
-from ..poller import poll_cycle_try, rss_mb
+from ..poller import poll_cycle_try, rss_current_mb, rss_mb
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -403,6 +403,7 @@ async def debug_memory(trace: str = "", user=Depends(require_superadmin)):
 
     out: dict = {
         "rss_mb": rss_mb(),
+        "rss_current_mb": rss_current_mb(),
         "gc_counts": gc.get_count(),
         "gc_garbage": len(gc.garbage),
     }
