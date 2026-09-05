@@ -72,6 +72,10 @@ class TikTokChecker:
     async def is_live(self, username: str) -> LiveInfo:
         clean = username.strip().lstrip("@").lower()
         async with self.semaphore:
+            # NOTE: the client MUST be closed (finally below). Each check
+            # builds a fresh TikTokLiveClient holding an httpx session; never
+            # closing them leaked connections until the host OOM'd (Render 512MB).
+            client = None
             try:
                 client = TikTokLiveClient(unique_id=f"@{clean}")
                 await _apply_auth(client)
@@ -99,6 +103,12 @@ class TikTokChecker:
             except Exception as e:
                 logger.warning(f"tiktok error user={clean} err={type(e).__name__}")
                 return LiveInfo(is_live=False, username=clean)
+            finally:
+                if client is not None:
+                    try:
+                        await client.close()
+                    except Exception:
+                        pass
 
 
 checker = TikTokChecker()
