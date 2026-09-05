@@ -66,80 +66,67 @@ async def _apply_auth(client):
 
 
 class TikTokChecker:
+    """One long-lived TikTokLiveClient per creator, reused across sweeps.
+
+    Why reuse: building a client per check churns httpx pools, SSL
+    contexts and signer objects every ~30s, and CPython never returns all
+    of that RSS to the OS — the process ratcheted to Render's 512MB cap.
+    Reuse keeps N bounded clients with warm, reused connections (also
+    faster checks: no TLS handshake per sweep).
+    Safety: each username is checked at most once per sweep and sweeps
+    never overlap (cycle lock), so a per-user lock + the global semaphore
+    rule out concurrent use of one client. Auth is applied once, at creation.
+    """
+
     def __init__(self):
         self.semaphore = asyncio.Semaphore(2)
+        self._clients: dict[str, TikTokLiveClient] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    def _client_for(self, clean: str) -> tuple[TikTokLiveClient, asyncio.Lock, bool]:
+        client = self._clients.get(clean)
+        created = client is None
+        if created:
+            client = TikTokLiveClient(unique_id=f"@{clean}")
+            self._clients[clean] = client
+        lock = self._locks.get(clean)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[clean] = lock
+        return client, lock, created
 
     async def is_live(self, username: str) -> LiveInfo:
         clean = username.strip().lstrip("@").lower()
+        client, lock, created = self._client_for(clean)
         async with self.semaphore:
-            # NOTE: the client MUST be closed (finally below). Each check
-            # builds a fresh TikTokLiveClient holding an httpx session; never
-            # closing them leaked connections until the host OOM'd (Render 512MB).
-            client = None
-            try:
-                client = TikTokLiveClient(unique_id=f"@{clean}")
-                await _apply_auth(client)
+            async with lock:
                 try:
-                    live = await asyncio.wait_for(client.is_live(), timeout=12)
-                except Exception:
+                    if created:
+                        await _apply_auth(client)
+                    try:
+                        live = await asyncio.wait_for(client.is_live(), timeout=12)
+                    except Exception:
+                        return LiveInfo(is_live=False, username=clean)
+                    if not live:
+                        return LiveInfo(is_live=False, username=clean)
+                    # Live — resolve the session id for dedup (best effort).
+                    # Stable fallback keeps dedup working even if this fails.
+                    room_id = f"live-{clean}"
+                    try:
+                        rid = await asyncio.wait_for(
+                            client.web.fetch_room_id_from_api(unique_id=f"@{clean}"),
+                            timeout=10,
+                        )
+                        if rid:
+                            room_id = str(rid)
+                    except Exception as e:
+                        logger.debug(f"room_id failed user={clean} err={type(e).__name__}")
+                    return LiveInfo(is_live=True, room_id=room_id, username=clean)
+                except asyncio.TimeoutError:
                     return LiveInfo(is_live=False, username=clean)
-                if not live:
-                    return LiveInfo(is_live=False, username=clean)
-                # Live — resolve the session id for dedup (best effort).
-                # Stable fallback keeps dedup working even if this fails.
-                room_id = f"live-{clean}"
-                try:
-                    rid = await asyncio.wait_for(
-                        client.web.fetch_room_id_from_api(unique_id=f"@{clean}"),
-                        timeout=10,
-                    )
-                    if rid:
-                        room_id = str(rid)
                 except Exception as e:
-                    logger.debug(f"room_id failed user={clean} err={type(e).__name__}")
-                return LiveInfo(is_live=True, room_id=room_id, username=clean)
-            except asyncio.TimeoutError:
-                return LiveInfo(is_live=False, username=clean)
-            except Exception as e:
-                logger.warning(f"tiktok error user={clean} err={type(e).__name__}")
-                return LiveInfo(is_live=False, username=clean)
-            finally:
-                if client is not None:
-                    await _shutdown_client(client)
-
-
-async def _shutdown_client(client) -> None:
-    """Close everything a TikTokLiveClient holds.
-
-    client.close() only closes web._httpx — the signer's Euler SDK builds
-    its own sync + async httpx clients (own pools) that are otherwise never
-    closed, leaking connections on every check until OOM.
-    Private attrs are guarded: pinned TikTokLive==6.2.1, fail-safe on change.
-    """
-    try:
-        await client.close()
-    except Exception:
-        pass
-    try:
-        web = getattr(client, "web", None)
-        signer = getattr(web, "_tiktok_signer", None)
-        sdk = getattr(signer, "_sdk_client", None)
-        if sdk is None:
-            return
-        acli = getattr(sdk, "_async_client", None)
-        if acli is not None:
-            try:
-                await acli.aclose()
-            except Exception:
-                pass
-        cli = getattr(sdk, "_client", None)
-        if cli is not None:
-            try:
-                cli.close()
-            except Exception:
-                pass
-    except Exception:
-        pass
+                    logger.warning(f"tiktok error user={clean} err={type(e).__name__}")
+                    return LiveInfo(is_live=False, username=clean)
 
 
 checker = TikTokChecker()

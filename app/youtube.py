@@ -108,46 +108,59 @@ async def confirm_with_api(client: httpx.AsyncClient, api_key: str, video_id: st
 
 
 class YouTubeChecker:
+    """One shared httpx client for all checks (warm pooled connections).
+
+    Building + closing a client per check churned pools/SSL contexts every
+    sweep with RSS the OS never got back. A process-lifetime client keeps
+    memory flat; httpx clients are safe for concurrent use.
+    """
+
     def __init__(self):
         self.semaphore = asyncio.Semaphore(2)
+        self._client: httpx.AsyncClient | None = None
+
+    def _shared(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                headers={"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"},
+                cookies=CONSENT_COOKIES,
+                follow_redirects=True,
+                timeout=15,
+            )
+        return self._client
 
     async def is_live(self, handle: str, api_key: str = "") -> YTLiveInfo:
         raw = (handle or "").strip()
         clean = raw if _CHANNEL_ID_RE.match(raw) else raw.lstrip("@").lower()
         async with self.semaphore:
             try:
-                async with httpx.AsyncClient(
-                    headers={"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"},
-                    cookies=CONSENT_COOKIES,
-                    follow_redirects=True,
-                    timeout=15,
-                ) as client:
-                    base = profile_base(clean)
-                    blocked = False
-                    for path, kind in (("/live", "live"), ("/streams", "streams")):
-                        try:
-                            r = await client.get(base + path)
-                        except Exception as e:
-                            logger.debug(f"youtube fetch failed user={clean} page={kind} err={type(e).__name__}")
-                            continue
-                        live, video_id, reason = parse_live_page(r.text, kind)
-                        if reason == "blocked":
-                            blocked = True
-                            continue
-                        if live and video_id:
-                            if api_key:
-                                confirmed = await confirm_with_api(client, api_key, video_id)
-                                if confirmed is False:
-                                    return YTLiveInfo(is_live=False, username=clean)
-                                if confirmed is None:
-                                    logger.debug(f"youtube confirm failed user={clean}, trusting page marker")
-                            return YTLiveInfo(is_live=True, room_id=video_id, username=clean)
-                        if live is False:
-                            return YTLiveInfo(is_live=False, username=clean)
-                    return YTLiveInfo(
-                        is_live=False, username=clean,
-                        error="blocked" if blocked else "fetch-failed",
-                    )
+                client = self._shared()
+                base = profile_base(clean)
+                blocked = False
+                for path, kind in (("/live", "live"), ("/streams", "streams")):
+                    try:
+                        r = await client.get(base + path)
+                    except Exception as e:
+                        logger.debug(f"youtube fetch failed user={clean} page={kind} err={type(e).__name__}")
+                        continue
+                    live, video_id, reason = parse_live_page(r.text, kind)
+                    if reason == "blocked":
+                        blocked = True
+                        continue
+                    if live and video_id:
+                        if api_key:
+                            confirmed = await confirm_with_api(client, api_key, video_id)
+                            if confirmed is False:
+                                return YTLiveInfo(is_live=False, username=clean)
+                            if confirmed is None:
+                                logger.debug(f"youtube confirm failed user={clean}, trusting page marker")
+                        return YTLiveInfo(is_live=True, room_id=video_id, username=clean)
+                    if live is False:
+                        return YTLiveInfo(is_live=False, username=clean)
+                return YTLiveInfo(
+                    is_live=False, username=clean,
+                    error="blocked" if blocked else "fetch-failed",
+                )
             except Exception as e:
                 logger.warning(f"youtube error user={clean} err={type(e).__name__}")
                 return YTLiveInfo(is_live=False, username=clean, error="error")

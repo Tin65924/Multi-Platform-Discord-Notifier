@@ -50,3 +50,5 @@ services:
         value: INFO
       - key: RENDER
         value: true
+      - key: MALLOC_MMAP_THRESHOLD_
+        value: "65536" # glibc: large buffers (page downloads, TLS) via mmap so freed memory returns to the OS instead of piling up in heap arenas (was OOMing at 512MB)
