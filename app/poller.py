@@ -224,6 +224,13 @@ async def poll_once():
                     discord_user_id=sub.discord_user_id,
                 )
                 sess_row = await _open_session(session, sub, room_id, now)
+                if sess_row.notified:
+                    # This exact live was already announced (restart after
+                    # cooldown, etc.). Only a new room_id re-notifies.
+                    sub.is_live = True
+                    await session.commit()
+                    await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
+                    continue
                 ok = await send_webhook(webhook_url, payload, timeout=settings.WEBHOOK_TIMEOUT_SECONDS)
                 if ok:
                     sub.last_room_id = room_id
@@ -322,6 +329,13 @@ async def poll_youtube():
                     platform="youtube",
                 )
                 sess_row = await _open_session(session, sub, room_id, now)
+                if sess_row.notified:
+                    # This exact live was already announced (restart after
+                    # cooldown, etc.). Only a new room_id re-notifies.
+                    sub.is_live = True
+                    await session.commit()
+                    await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
+                    continue
                 ok = await send_webhook(webhook_url, payload, timeout=settings.WEBHOOK_TIMEOUT_SECONDS)
                 if ok:
                     sub.last_room_id = room_id
@@ -425,6 +439,13 @@ async def poll_kick():
                     platform="kick",
                 )
                 sess_row = await _open_session(session, sub, room_id, now)
+                if sess_row.notified:
+                    # This exact live was already announced (restart after
+                    # cooldown, etc.). Only a new room_id re-notifies.
+                    sub.is_live = True
+                    await session.commit()
+                    await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
+                    continue
                 ok = await send_webhook(webhook_url, payload, timeout=settings.WEBHOOK_TIMEOUT_SECONDS)
                 if ok:
                     sub.last_room_id = room_id
