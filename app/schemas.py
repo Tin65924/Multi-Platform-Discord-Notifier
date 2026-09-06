@@ -103,6 +103,7 @@ class GlobalSettingsIn(BaseModel):
     custom_message: str = "{discord} is LIVE!"
     embed_image_url: str | None = None
     embed_color: str = "#FF0050"
+    notifications_enabled: bool = True
 
     @field_validator("webhook_url")
     @classmethod

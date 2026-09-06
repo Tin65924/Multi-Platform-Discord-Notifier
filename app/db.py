@@ -170,11 +170,13 @@ _GLOBAL_SETTINGS_COLS_SQLITE = (
     ("ping_everyone", "BOOLEAN DEFAULT 1"),
     ("embed_image_url", "TEXT"),
     ("embed_color", "VARCHAR(7) DEFAULT '#FF0050'"),
+    ("notifications_enabled", "BOOLEAN DEFAULT 1"),
 )
 _GLOBAL_SETTINGS_COLS_PG = (
     ("ping_everyone", "BOOLEAN DEFAULT true"),
     ("embed_image_url", "TEXT"),
     ("embed_color", "VARCHAR(7) DEFAULT '#FF0050'"),
+    ("notifications_enabled", "BOOLEAN DEFAULT true"),
 )
 
 

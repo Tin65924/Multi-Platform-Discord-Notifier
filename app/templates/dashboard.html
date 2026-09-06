@@ -51,6 +51,10 @@
   <section id="tab-webhook" class="hidden" style="margin-top:1.5rem">
     <div class="card">
       <h2>Global defaults</h2>
+      <div style="display:flex; gap:10px; align-items:center; margin-bottom:12px">
+        <button id="notifToggle" onclick="toggleNotifications()" class="btn btn-gold btn-xs">Notifications: ON</button>
+        <span class="hint" style="margin:0">Paused = no Discord posts. Detection + analytics keep running.</span>
+      </div>
       <p class="hint">Used for every creator unless that creator overrides it. Channel: Discord &rarr; Integrations &rarr; Webhooks &rarr; Copy URL.</p>
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px; align-items:start">
         <div style="display:grid; gap:12px">
@@ -575,11 +579,31 @@ async function loadSettings() {
     settingsMsg.textContent = 'Configured: ' + s.webhook_url_masked;
     settingsMsg.className = 'msg msg-ok';
   }
+  NOTIF_ON = s.notifications_enabled !== false;
+  renderNotifToggle();
   renderDefaultsPreview();
+}
+let NOTIF_ON = true;
+function renderNotifToggle() {
+  const b = document.getElementById('notifToggle');
+  b.textContent = 'Notifications: ' + (NOTIF_ON ? 'ON' : 'PAUSED');
+  b.classList.toggle('btn-gold', NOTIF_ON);
+  b.classList.toggle('btn-danger', !NOTIF_ON);
+}
+async function toggleNotifications() {
+  const body = {webhook_url: webhook.value, ping_role_id: role.value || null, ping_everyone: pingEveryone.checked,
+    custom_message: message.value, embed_image_url: defImage.value || null, embed_color: defColor.value,
+    notifications_enabled: !NOTIF_ON};
+  const r = await api('/api/settings',{method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  if (!r.ok) { toast(await r.text(), 'err'); return; }
+  NOTIF_ON = !NOTIF_ON;
+  renderNotifToggle();
+  toast(NOTIF_ON ? 'Live notifications ON' : 'Live notifications PAUSED', NOTIF_ON ? 'ok' : 'err');
 }
 async function saveSettings() {
   const body = {webhook_url: webhook.value, ping_role_id: role.value || null, ping_everyone: pingEveryone.checked,
-    custom_message: message.value, embed_image_url: defImage.value || null, embed_color: defColor.value};
+    custom_message: message.value, embed_image_url: defImage.value || null, embed_color: defColor.value,
+    notifications_enabled: NOTIF_ON};
   const r = await api('/api/settings',{method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
   const t = r.ok ? 'Saved!' : await r.text();
   settingsMsg.textContent = t;

@@ -177,6 +177,7 @@ async def get_settings_api(session: AsyncSession = Depends(get_session), user=De
         "custom_message": msg,
         "embed_image_url": image,
         "embed_color": color,
+        "notifications_enabled": bool(gs.notifications_enabled) if gs and gs.notifications_enabled is not None else True,
         # Which platforms the poller actually live-checks (drives dashboard hints).
         "live_checks": {
             "tiktok": True,
@@ -193,7 +194,8 @@ async def put_settings(payload: GlobalSettingsIn, session: AsyncSession = Depend
     if not gs:
         gs = GlobalSettings(id=1, webhook_url=payload.webhook_url, ping_role_id=payload.ping_role_id,
                             ping_everyone=payload.ping_everyone, custom_message=payload.custom_message,
-                            embed_image_url=payload.embed_image_url, embed_color=payload.embed_color)
+                            embed_image_url=payload.embed_image_url, embed_color=payload.embed_color,
+                            notifications_enabled=payload.notifications_enabled)
         session.add(gs)
     else:
         gs.webhook_url = payload.webhook_url
@@ -202,6 +204,7 @@ async def put_settings(payload: GlobalSettingsIn, session: AsyncSession = Depend
         gs.custom_message = payload.custom_message
         gs.embed_image_url = payload.embed_image_url
         gs.embed_color = payload.embed_color
+        gs.notifications_enabled = payload.notifications_enabled
     await session.commit()
     await log_audit(user["username"], "webhook.update", "global defaults saved")
     return {"msg": "Settings saved"}

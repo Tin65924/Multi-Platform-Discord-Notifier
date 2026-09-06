@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 from sqlalchemy import select, or_
 
 from .config import get_settings
-from .db import async_session
+from .db import async_session, open_session
 from .models import Subscription, GlobalSettings, LiveSession
 from .tiktok import checker
 from .webhook import build_embed, display_account, resolve_webhook_cfg, send_webhook
@@ -134,6 +134,14 @@ async def _open_session(session, sub, room_id: str, now):
     return row
 
 
+async def notifications_enabled(session) -> bool:
+    """Global kill-switch. NULL (pre-migration rows) counts as ON."""
+    gs = await session.get(GlobalSettings, 1)
+    if gs is None or gs.notifications_enabled is None:
+        return True
+    return bool(gs.notifications_enabled)
+
+
 async def _close_open_sessions(session, sub_id: int, now):
     """Stamp ended_at on any open rows. Idempotent — safe on every check."""
     res = await session.execute(
@@ -147,8 +155,6 @@ async def _close_open_sessions(session, sub_id: int, now):
 
 
 async def get_global_settings():
-    from .db import open_session
-
     session = await open_session()
     try:
         gs = await session.get(GlobalSettings, 1)
@@ -169,6 +175,7 @@ async def poll_once():
             )
         )
         rows = [(s.id, s.tiktok_username) for s in result.scalars().all()]
+        notify_on = await notifications_enabled(session)
     if not rows:
         return {"checked": 0, "notified": 0}
 
@@ -231,12 +238,14 @@ async def poll_once():
                     await session.commit()
                     await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                     continue
-                ok = await send_webhook(webhook_url, payload, timeout=settings.WEBHOOK_TIMEOUT_SECONDS)
+                ok = False
+                if notify_on:
+                    ok = await send_webhook(webhook_url, payload, timeout=settings.WEBHOOK_TIMEOUT_SECONDS)
+                sub.last_room_id = room_id
+                sub.last_live_at = now
+                sub.is_live = True
                 if ok:
-                    sub.last_room_id = room_id
                     sub.last_notified_at = now
-                    sub.last_live_at = now
-                    sub.is_live = True
                     sess_row.notified = True
                     notified += 1
                     _last_room_cache["tt:" + username] = room_id
@@ -264,6 +273,7 @@ async def poll_youtube():
             )
         )
         rows = [(s.id, s.tiktok_username) for s in result.scalars().all()]
+        notify_on = await notifications_enabled(session)
     if not rows:
         return {"checked": 0, "notified": 0}
 
@@ -336,12 +346,14 @@ async def poll_youtube():
                     await session.commit()
                     await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                     continue
-                ok = await send_webhook(webhook_url, payload, timeout=settings.WEBHOOK_TIMEOUT_SECONDS)
+                ok = False
+                if notify_on:
+                    ok = await send_webhook(webhook_url, payload, timeout=settings.WEBHOOK_TIMEOUT_SECONDS)
+                sub.last_room_id = room_id
+                sub.last_live_at = now
+                sub.is_live = True
                 if ok:
-                    sub.last_room_id = room_id
                     sub.last_notified_at = now
-                    sub.last_live_at = now
-                    sub.is_live = True
                     sess_row.notified = True
                     notified += 1
                     _last_room_cache["yt:" + handle] = room_id
@@ -374,6 +386,7 @@ async def poll_kick():
             )
         )
         rows = [(s.id, s.tiktok_username) for s in result.scalars().all()]
+        notify_on = await notifications_enabled(session)
     if not rows:
         return {"checked": 0, "notified": 0}
 
@@ -446,12 +459,14 @@ async def poll_kick():
                     await session.commit()
                     await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                     continue
-                ok = await send_webhook(webhook_url, payload, timeout=settings.WEBHOOK_TIMEOUT_SECONDS)
+                ok = False
+                if notify_on:
+                    ok = await send_webhook(webhook_url, payload, timeout=settings.WEBHOOK_TIMEOUT_SECONDS)
+                sub.last_room_id = room_id
+                sub.last_live_at = now
+                sub.is_live = True
                 if ok:
-                    sub.last_room_id = room_id
                     sub.last_notified_at = now
-                    sub.last_live_at = now
-                    sub.is_live = True
                     sess_row.notified = True
                     notified += 1
                     _last_room_cache["kk:" + handle] = room_id

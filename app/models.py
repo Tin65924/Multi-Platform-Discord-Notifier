@@ -46,6 +46,9 @@ class GlobalSettings(Base):
     # Global defaults used when a creator leaves their own field empty
     embed_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     embed_color: Mapped[str] = mapped_column(String(7), default="#FF0050")
+    # Global kill-switch (game maintenance etc.): False pauses automatic
+    # Discord posts. Detection, sessions and analytics keep running.
+    notifications_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
