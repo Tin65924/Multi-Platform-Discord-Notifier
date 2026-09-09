@@ -153,7 +153,7 @@ async def open_session(retries: int = 1) -> AsyncSession:
 
 
 # Desired-state columns for pre-existing DBs (create_all only covers fresh DBs).
-_SUBSCRIPTION_COLS = (
+_SUBSCRIPTION_COLS_COMMON = (
     ("display_name", "VARCHAR(128)"),
     ("avatar_url", "TEXT"),
     ("cover_url", "TEXT"),
@@ -163,9 +163,13 @@ _SUBSCRIPTION_COLS = (
     ("link_text", "VARCHAR(128)"),
     ("image_url", "TEXT"),
     ("discord_user_id", "VARCHAR(32)"),
+    ("image_mime", "VARCHAR(16)"),
     ("color", "VARCHAR(7)"),
     ("platform", "VARCHAR(16) DEFAULT 'tiktok'"),
 )
+# Blob type differs per dialect (BYTEA vs BLOB).
+_SUBSCRIPTION_COLS_SQLITE = _SUBSCRIPTION_COLS_COMMON + (("image_blob", "BLOB"),)
+_SUBSCRIPTION_COLS_PG = _SUBSCRIPTION_COLS_COMMON + (("image_blob", "BYTEA"),)
 _GLOBAL_SETTINGS_COLS_SQLITE = (
     ("ping_everyone", "BOOLEAN DEFAULT 1"),
     ("embed_image_url", "TEXT"),
@@ -183,7 +187,7 @@ _GLOBAL_SETTINGS_COLS_PG = (
 def postgres_migration_statements() -> list:
     """Idempotent DDL for existing Postgres DBs (IF NOT EXISTS everywhere)."""
     stmts = []
-    for col, typ in _SUBSCRIPTION_COLS:
+    for col, typ in _SUBSCRIPTION_COLS_PG:
         stmts.append(f"ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS {col} {typ}")
     for col, typ in _GLOBAL_SETTINGS_COLS_PG:
         stmts.append(f"ALTER TABLE global_settings ADD COLUMN IF NOT EXISTS {col} {typ}")
@@ -207,7 +211,7 @@ def postgres_migration_statements() -> list:
 async def _migrate_sqlite(conn):
     """Probe-and-add for pre-existing SQLite files (PRAGMA-based, as before)."""
     for table, cols in (
-        ("subscriptions", _SUBSCRIPTION_COLS),
+        ("subscriptions", _SUBSCRIPTION_COLS_SQLITE),
         ("global_settings", _GLOBAL_SETTINGS_COLS_SQLITE),
     ):
         try:

@@ -9,7 +9,7 @@ from .config import get_settings
 from .db import async_session, open_session
 from .models import Subscription, GlobalSettings, LiveSession
 from .tiktok import checker
-from .webhook import build_embed, display_account, resolve_webhook_cfg, send_webhook
+from .webhook import build_embed, display_account, effective_image, resolve_webhook_cfg, send_webhook
 from .kick import checker as kick_checker
 from .youtube import checker as youtube_checker
 
@@ -224,7 +224,7 @@ async def poll_once():
                     message=custom_message,
                     ping_role_id=ping_role_id,
                     ping_everyone=ping_everyone,
-                    image_url=sub.image_url or embed_image_url,
+                    image_url=effective_image(sub, embed_image_url),
                     color=sub.color or embed_color,
                     author_name=sub.author_name,
                     discord_username=sub.discord_username,
@@ -331,7 +331,7 @@ async def poll_youtube():
                     message=custom_message,
                     ping_role_id=ping_role_id,
                     ping_everyone=ping_everyone,
-                    image_url=sub.image_url or embed_image_url,
+                    image_url=effective_image(sub, embed_image_url),
                     color=sub.color or embed_color,
                     author_name=sub.author_name,
                     discord_username=sub.discord_username,
@@ -444,7 +444,7 @@ async def poll_kick():
                     message=custom_message,
                     ping_role_id=ping_role_id,
                     ping_everyone=ping_everyone,
-                    image_url=sub.image_url or embed_image_url,
+                    image_url=effective_image(sub, embed_image_url),
                     color=sub.color or embed_color,
                     author_name=sub.author_name,
                     discord_username=sub.discord_username,

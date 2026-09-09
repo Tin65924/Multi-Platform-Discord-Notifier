@@ -26,6 +26,8 @@ services:
         sync: false
       - key: EMBED_IMAGE_URL
         sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false # e.g. https://playtopialivenotifier.onrender.com — lets Discord fetch uploaded photos
       - key: TIKTOK_SESSION_ID
         sync: false # tiktok.com browser cookie "sessionid" — fewer flags, age-restricted lives
       - key: TT_COOKIE_PROVIDER

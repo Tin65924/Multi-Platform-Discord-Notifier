@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime, timedelta, timezone
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi.responses import Response
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,6 +23,8 @@ from ..security import (
 )
 from ..tiktok import checker
 from ..webhook import build_embed, send_webhook, platform_label, display_account, resolve_webhook_cfg
+from ..webhook import effective_image, served_photo_url
+from ..images import process_upload, MAX_UPLOAD_BYTES
 from ..wildlines import WILD_LINES
 from ..poller import poll_cycle_try, rss_current_mb, rss_mb
 
@@ -44,7 +47,7 @@ def _style_for(sub: Subscription, image: str | None, color: str) -> dict:
         "author_name": sub.author_name or None,
         "discord_username": sub.discord_username or None,
         "discord_user_id": sub.discord_user_id or None,
-        "image_url": sub.image_url or image,
+        "image_url": effective_image(sub, image),
         "color": sub.color or color,
     }
 
@@ -178,6 +181,8 @@ async def get_settings_api(session: AsyncSession = Depends(get_session), user=De
         "embed_image_url": image,
         "embed_color": color,
         "notifications_enabled": bool(gs.notifications_enabled) if gs and gs.notifications_enabled is not None else True,
+        # Uploaded photos need a public base URL for Discord to fetch them.
+        "public_base_set": bool((settings.PUBLIC_BASE_URL or "").strip()),
         # Which platforms the poller actually live-checks (drives dashboard hints).
         "live_checks": {
             "tiktok": True,
@@ -226,6 +231,7 @@ async def list_subs(session: AsyncSession = Depends(get_session), user=Depends(r
             "discord_username": s.discord_username,
             "discord_user_id": s.discord_user_id,
             "image_url": s.image_url,
+            "has_photo": bool(s.image_mime),
             "color": s.color,
             "last_checked_at": s.last_checked_at.isoformat() if s.last_checked_at else None,
             "last_notified_at": s.last_notified_at.isoformat() if s.last_notified_at else None,
@@ -274,6 +280,73 @@ async def update_style(sub_id: int, payload: SubscriptionStyleIn, session: Async
     await session.commit()
     await log_audit(user["username"], "creator.style", f"styled @{sub.tiktok_username}")
     return {"msg": f"Style saved for @{sub.tiktok_username}"}
+
+
+@router.post("/subscriptions/{sub_id}/photo")
+async def upload_photo(
+    sub_id: int, file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session), user=Depends(require_admin),
+):
+    """Upload a creator photo. Validated + normalized, stored in Postgres.
+
+    Takes precedence over the link field; delete it to fall back to the link.
+    """
+    sub = await session.get(Subscription, sub_id)
+    if not sub:
+        raise HTTPException(404, "Not found")
+    try:
+        raw = await file.read(MAX_UPLOAD_BYTES + 1)
+    except Exception:
+        raise HTTPException(400, "Could not read upload")
+    finally:
+        try:
+            await file.close()
+        except Exception:
+            pass
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "File too large (max 8MB)")
+    try:
+        data, mime = process_upload(raw)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    sub.image_blob = data
+    sub.image_mime = mime
+    await session.commit()
+    await log_audit(user["username"], "photo.upload",
+                    f"photo for @{sub.tiktok_username} ({mime}, {len(data)}b)")
+    return {"msg": "Photo saved — it now shows instead of the link",
+            "url": served_photo_url(sub.id), "mime": mime, "bytes": len(data)}
+
+
+@router.delete("/subscriptions/{sub_id}/photo")
+async def delete_photo(sub_id: int, session: AsyncSession = Depends(get_session), user=Depends(require_admin)):
+    """Remove the uploaded photo — the embed falls back to the link field."""
+    sub = await session.get(Subscription, sub_id)
+    if not sub:
+        raise HTTPException(404, "Not found")
+    sub.image_blob = None
+    sub.image_mime = None
+    await session.commit()
+    await log_audit(user["username"], "photo.remove", f"photo removed for @{sub.tiktok_username}")
+    return {"msg": "Photo removed — link is used again"}
+
+
+@router.get("/media/creator/{sub_id}")
+async def serve_photo(sub_id: int, session: AsyncSession = Depends(get_session)):
+    """Public: Discord fetches embed images here. No auth by design."""
+    sub = await session.get(Subscription, sub_id)
+    if not sub:
+        raise HTTPException(404, "No photo")
+    # image_blob is deferred (list queries never load it) — async sessions
+    # can't lazy-load, so refresh it explicitly.
+    await session.refresh(sub, attribute_names=["image_blob", "image_mime"])
+    if not sub.image_blob or not sub.image_mime:
+        raise HTTPException(404, "No photo")
+    return Response(
+        content=bytes(sub.image_blob),
+        media_type=sub.image_mime,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @router.delete("/subscriptions/{sub_id}")

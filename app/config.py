@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     CUSTOM_MESSAGE: str = "{discord} is LIVE!"
     # Hardcoded embed image (public https URL) — can also be set in dashboard
     EMBED_IMAGE_URL: str = ""
+    # Public base URL of this app (e.g. https://xxx.onrender.com). Required so
+    # Discord can fetch uploaded creator photos served at /api/media/....
+    PUBLIC_BASE_URL: str = ""
     # Optional TikTok login session (browser cookie "sessionid" from tiktok.com).
     # Logged-in calls are flagged far less and can read age-restricted lives.
     # Treat like a password: .env only, never commit, never share.

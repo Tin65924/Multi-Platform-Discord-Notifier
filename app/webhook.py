@@ -39,6 +39,29 @@ def resolve_image(setting_url: str | None, env_url: str = "") -> str | None:
     return None
 
 
+def served_photo_url(sub_id: int) -> str | None:
+    """Public URL of an uploaded creator photo (Discord fetches it)."""
+    base = ""
+    try:
+        base = (getattr(_settings, "PUBLIC_BASE_URL", "") or "").rstrip("/")
+    except Exception:
+        pass
+    return f"{base}/api/media/creator/{sub_id}" if base else None
+
+
+def effective_image(sub, global_image: str | None) -> str | None:
+    """Image precedence: uploaded photo > per-creator link > global default.
+
+    Needs only sub.id/.image_mime/.image_url (never touches the blob,
+    so list queries stay light).
+    """
+    if getattr(sub, "image_mime", None):
+        url = served_photo_url(getattr(sub, "id", 0))
+        if url:
+            return url
+    return getattr(sub, "image_url", None) or global_image
+
+
 def resolve_webhook_cfg(gs) -> tuple:
     """Global webhook resolution from a GlobalSettings row (or None).
 

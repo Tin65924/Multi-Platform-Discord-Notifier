@@ -1,4 +1,4 @@
-from sqlalchemy import String, Boolean, DateTime, Text, UniqueConstraint, func
+from sqlalchemy import String, Boolean, DateTime, LargeBinary, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime, timezone
 from .db import Base
@@ -73,7 +73,11 @@ class Subscription(Base):
     discord_user_id: Mapped[str | None] = mapped_column(String(32), nullable=True)  # numeric ID -> real <@id> mention
     message: Mapped[str | None] = mapped_column(Text, nullable=True)  # content override, tags: {account} {link} {ping_role}
     link_text: Mapped[str | None] = mapped_column(String(128), nullable=True)  # default: Watch user's LIVE! (no @)
-    image_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # big photo, default global image
+    image_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # link fallback, default global image
+    # Uploaded photo (Neon-backed; Render disk is ephemeral so files can't live there).
+    # deferred: list queries never load the bytes — only the media endpoint reads them.
+    image_blob: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True, nullable=True)
+    image_mime: Mapped[str | None] = mapped_column(String(16), nullable=True)  # set <=> photo exists
     color: Mapped[str | None] = mapped_column(String(7), nullable=True)  # hex like #FF0050, default global color
 
     # Legacy TikTok profile cache (no longer fetched, kept for stored avatars)
