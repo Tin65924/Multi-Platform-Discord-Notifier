@@ -375,9 +375,24 @@ async def update_handle(sub_id: int, payload: HandleUpdate, session: AsyncSessio
     old = sub.tiktok_username
     sub.tiktok_username = handle
     sub.first_not_found_at = None
+    # Best-effort: anchor the numeric id + grab the avatar for the new name.
+    # Never fails the update itself.
+    if (sub.platform or "tiktok") == "tiktok":
+        try:
+            from ..tiktok import fetch_tiktok_profile
+
+            prof = await fetch_tiktok_profile(handle)
+            if prof:
+                if prof["user_id"]:
+                    sub.tiktok_user_id = prof["user_id"]
+                if prof["avatar_url"]:
+                    sub.avatar_url = prof["avatar_url"]
+                    sub.avatar_checked_at = datetime.now(timezone.utc)
+        except Exception:
+            pass
     await session.commit()
     await log_audit(user["username"], "creator.relink", f"@{old} -> @{handle} on {platform_label(sub.platform)}")
-    return {"msg": f"Updated @{old} to @{handle}"}
+    return {"msg": f"Updated @{old} to @{handle} — next sweep picks up their live"}
 
 
 @router.delete("/subscriptions/{sub_id}")

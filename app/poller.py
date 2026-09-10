@@ -519,7 +519,6 @@ async def poll_kick():
     return {"checked": checked, "notified": notified}
 
 
-RENAME_FLAG_DAYS = 3
 AVATAR_REFRESH_DAYS = 7
 _maint_attempts: dict[int, float] = {}  # sub_id -> last migrate-attempt epoch
 
@@ -559,16 +558,18 @@ async def _try_migrate(session, sub, prof, now) -> bool:
 
 
 async def _maintenance_renames(session, now):
-    """Auto-migrate handles TikTok still resolves to a new canonical name."""
+    """Auto-migrate handles TikTok still resolves to a new canonical name.
+
+    Attempts start at the first flagged sweep (fresh renames still resolve
+    best) — the 3-day rule gates only the dashboard attention flag.
+    """
     from .tiktok import fetch_tiktok_profile
 
-    cutoff = now - timedelta(days=RENAME_FLAG_DAYS)
     res = await session.execute(
         select(Subscription).where(
             Subscription.enabled == True,  # noqa
             Subscription.platform == "tiktok",
             Subscription.first_not_found_at.is_not(None),
-            Subscription.first_not_found_at < cutoff,
         )
     )
     for sub in res.scalars().all():

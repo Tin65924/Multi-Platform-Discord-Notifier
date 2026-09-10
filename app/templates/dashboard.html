@@ -384,6 +384,11 @@ function openEdit(id) {
   openModal('Edit creator', `
     <div><label class="mini">${userLabel(platOf(s))}</label>
     <div style="font-size:15px">${escapeHtml(disp)}</div></div>
+    <div><label class="mini">New handle (only if they renamed — style and history are kept)</label>
+    <div style="display:flex; gap:8px">
+      <input id="m_newhandle" placeholder="@newname">
+      <button onclick="saveRelink(EDITING_ID)" class="btn btn-ghost btn-xs">Update</button>
+    </div></div>
     <div class="grid2">
       <div><label class="mini">Creator Name</label>
       <input id="m_author" value="${escapeHtml(s.author_name||'')}"></div>
@@ -784,13 +789,13 @@ async function openRelink(id) {
     </div>`);
 }
 async function saveRelink(id) {
-  const v = document.getElementById('m_newhandle').value;
+  const inp = document.getElementById('m_newhandle');
+  if (!inp || !inp.value.trim()) { toast('Type the new handle first', 'err'); return; }
   const r = await api('/api/subscriptions/' + id + '/handle',
-    {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({handle: v})});
-  const m = document.getElementById('m_relinkMsg');
+    {method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({handle: inp.value})});
+  const m = document.getElementById('m_relinkMsg') || document.getElementById('m_msg2');
   const t = r.ok ? (await r.json()).msg : await r.text();
-  m.textContent = t;
-  m.className = r.ok ? 'msg msg-ok' : 'msg msg-err';
+  if (m) { m.textContent = t; m.className = r.ok ? 'msg msg-ok' : 'msg msg-err'; }
   toast(t, r.ok ? 'ok' : 'err');
   if (r.ok) { closeModal(); loadSubs(); loadAnalytics(); }
 }
