@@ -172,6 +172,8 @@ class TikTokChecker:
                         return LiveInfo(is_live=False, username=clean)
                     # Live — resolve the session id for dedup (best effort).
                     # Stable fallback keeps dedup working even if this fails.
+                    # NOTE: any failure here keeps the LIVE result — only the
+                    # primary check above may report not_found.
                     room_id = f"live-{clean}"
                     try:
                         rid = await asyncio.wait_for(
@@ -180,8 +182,6 @@ class TikTokChecker:
                         )
                         if rid:
                             room_id = str(rid)
-                    except UserNotFoundError:
-                        return LiveInfo(is_live=False, username=clean, error="not_found")
                     except Exception as e:
                         logger.debug(f"room_id failed user={clean} err={type(e).__name__}")
                     return LiveInfo(is_live=True, room_id=room_id, username=clean)
