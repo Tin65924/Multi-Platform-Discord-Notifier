@@ -80,10 +80,16 @@ class Subscription(Base):
     image_mime: Mapped[str | None] = mapped_column(String(16), nullable=True)  # set <=> photo exists
     color: Mapped[str | None] = mapped_column(String(7), nullable=True)  # hex like #FF0050, default global color
 
-    # Legacy TikTok profile cache (no longer fetched, kept for stored avatars)
+    # Auto avatar (refreshed weekly from the platform profile page)
     display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    avatar_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cover_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Rename tracking: immutable numeric platform id (hijack guard) + start
+    # of the current "handle not found" streak (None = resolving fine).
+    tiktok_user_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    first_not_found_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     is_live: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     last_room_id: Mapped[str | None] = mapped_column(String(64), nullable=True)

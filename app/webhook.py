@@ -50,16 +50,16 @@ def served_photo_url(sub_id: int) -> str | None:
 
 
 def effective_image(sub, global_image: str | None) -> str | None:
-    """Image precedence: uploaded photo > per-creator link > global default.
+    """Image precedence: uploaded photo > per-creator link > auto avatar > global.
 
-    Needs only sub.id/.image_mime/.image_url (never touches the blob,
-    so list queries stay light).
+    Needs only sub.id/.image_mime/.image_url/.avatar_url (never touches the
+    blob, so list queries stay light).
     """
     if getattr(sub, "image_mime", None):
         url = served_photo_url(getattr(sub, "id", 0))
         if url:
             return url
-    return getattr(sub, "image_url", None) or global_image
+    return getattr(sub, "image_url", None) or getattr(sub, "avatar_url", None) or global_image
 
 
 def resolve_webhook_cfg(gs) -> tuple:

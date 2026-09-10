@@ -10,7 +10,7 @@ from ..db import get_session
 from ..models import Subscription, GlobalSettings, User, AuditLog, LiveSession
 from ..schemas import (
     SubscriptionCreate, GlobalSettingsIn, LoginIn, AdminCreate,
-    PasswordChange, SubscriptionStyleIn,
+    PasswordChange, SubscriptionStyleIn, HandleUpdate, normalize_handle,
 )
 from ..security import (
     require_admin,
@@ -232,6 +232,7 @@ async def list_subs(session: AsyncSession = Depends(get_session), user=Depends(r
             "discord_user_id": s.discord_user_id,
             "image_url": s.image_url,
             "has_photo": bool(s.image_mime),
+            "has_avatar": bool(s.avatar_url),
             "color": s.color,
             "last_checked_at": s.last_checked_at.isoformat() if s.last_checked_at else None,
             "last_notified_at": s.last_notified_at.isoformat() if s.last_notified_at else None,
@@ -347,6 +348,36 @@ async def serve_photo(sub_id: int, session: AsyncSession = Depends(get_session))
         media_type=sub.image_mime,
         headers={"Cache-Control": "public, max-age=86400"},
     )
+
+
+@router.patch("/subscriptions/{sub_id}/handle")
+async def update_handle(sub_id: int, payload: HandleUpdate, session: AsyncSession = Depends(get_session), user=Depends(require_admin)):
+    """Re-link a creator that renamed on their platform. Style, photo,
+    sessions and KPIs are preserved (unlike remove + re-add)."""
+    sub = await session.get(Subscription, sub_id)
+    if not sub:
+        raise HTTPException(404, "Not found")
+    try:
+        handle = normalize_handle(sub.platform or "tiktok", payload.handle)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if handle == sub.tiktok_username:
+        return {"msg": "Handle unchanged"}
+    dup = await session.execute(
+        select(Subscription).where(
+            Subscription.platform == (sub.platform or "tiktok"),
+            Subscription.tiktok_username == handle,
+            Subscription.id != sub_id,
+        )
+    )
+    if dup.scalar_one_or_none():
+        raise HTTPException(409, f"@{handle} is already tracked")
+    old = sub.tiktok_username
+    sub.tiktok_username = handle
+    sub.first_not_found_at = None
+    await session.commit()
+    await log_audit(user["username"], "creator.relink", f"@{old} -> @{handle} on {platform_label(sub.platform)}")
+    return {"msg": f"Updated @{old} to @{handle}"}
 
 
 @router.delete("/subscriptions/{sub_id}")

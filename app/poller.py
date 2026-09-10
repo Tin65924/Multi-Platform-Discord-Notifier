@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import random
+import time
 from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import select, or_
@@ -8,6 +9,7 @@ from sqlalchemy import select, or_
 from .config import get_settings
 from .db import async_session, open_session
 from .models import Subscription, GlobalSettings, LiveSession
+from .security import log_audit
 from .tiktok import checker
 from .webhook import build_embed, display_account, effective_image, resolve_webhook_cfg, send_webhook
 from .kick import checker as kick_checker
@@ -201,6 +203,18 @@ async def poll_once():
             if sub is None:
                 continue  # removed mid-sweep
             sub.last_checked_at = now
+            err = getattr(live_info, "error", None)
+            if err == "not_found":
+                # Dead handle (renamed/deleted): streak starts, open
+                # sessions close, nothing notifies.
+                if sub.first_not_found_at is None:
+                    sub.first_not_found_at = now
+                await _close_open_sessions(session, sub.id, now)
+                await session.commit()
+                await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
+                continue
+            if err is None and sub.first_not_found_at is not None:
+                sub.first_not_found_at = None  # clean read clears streak
 
             if live_info.is_live:
                 room_id = live_info.room_id or f"live-{username}"
@@ -301,6 +315,18 @@ async def poll_youtube():
             if sub is None:
                 continue  # removed mid-sweep
             sub.last_checked_at = now
+            err = getattr(live_info, "error", None)
+            if err == "not_found":
+                # Dead handle (renamed/deleted): streak starts, open
+                # sessions close, nothing notifies.
+                if sub.first_not_found_at is None:
+                    sub.first_not_found_at = now
+                await _close_open_sessions(session, sub.id, now)
+                await session.commit()
+                await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
+                continue
+            if err is None and sub.first_not_found_at is not None:
+                sub.first_not_found_at = None  # clean read clears streak
 
             if live_info.error and not live_info.is_live:
                 # Blocked or ambiguous page — keep last known state, try again next sweep.
@@ -414,6 +440,18 @@ async def poll_kick():
             if sub is None:
                 continue  # removed mid-sweep
             sub.last_checked_at = now
+            err = getattr(live_info, "error", None)
+            if err == "not_found":
+                # Dead handle (renamed/deleted): streak starts, open
+                # sessions close, nothing notifies.
+                if sub.first_not_found_at is None:
+                    sub.first_not_found_at = now
+                await _close_open_sessions(session, sub.id, now)
+                await session.commit()
+                await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
+                continue
+            if err is None and sub.first_not_found_at is not None:
+                sub.first_not_found_at = None  # clean read clears streak
 
             if live_info.error and not live_info.is_live:
                 # Inconclusive for this slug — keep last known state.
@@ -481,6 +519,121 @@ async def poll_kick():
     return {"checked": checked, "notified": notified}
 
 
+RENAME_FLAG_DAYS = 3
+AVATAR_REFRESH_DAYS = 7
+_maint_attempts: dict[int, float] = {}  # sub_id -> last migrate-attempt epoch
+
+
+async def _try_migrate(session, sub, prof, now) -> bool:
+    """Move a row to prof's canonical handle when safe. Returns True if moved."""
+    new = prof["unique_id"]
+    if new == sub.tiktok_username:
+        return False
+    dup = await session.execute(
+        select(Subscription).where(
+            Subscription.platform == (sub.platform or "tiktok"),
+            Subscription.tiktok_username == new,
+            Subscription.id != sub.id,
+        )
+    )
+    if dup.scalar_one_or_none():
+        logger.info(f"rename auto-migrate skipped @{sub.tiktok_username}: @{new} already tracked")
+        return False
+    if sub.tiktok_user_id and prof["user_id"] and prof["user_id"] != sub.tiktok_user_id:
+        # Handle now belongs to a different account — never auto-follow.
+        logger.warning(f"rename blocked @{sub.tiktok_username}: handle taken over, needs human confirm")
+        await log_audit("system", "rename.blocked", f"@{sub.tiktok_username} now resolves elsewhere")
+        return False
+    old = sub.tiktok_username
+    sub.tiktok_username = new
+    if prof["user_id"]:
+        sub.tiktok_user_id = prof["user_id"]
+    if prof["avatar_url"]:
+        sub.avatar_url = prof["avatar_url"]
+        sub.avatar_checked_at = now
+    sub.first_not_found_at = None
+    await session.commit()
+    await log_audit("system", "creator.rename", f"auto-migrated @{old} -> @{new}")
+    logger.info(f"rename auto-migrated @{old} -> @{new}")
+    return True
+
+
+async def _maintenance_renames(session, now):
+    """Auto-migrate handles TikTok still resolves to a new canonical name."""
+    from .tiktok import fetch_tiktok_profile
+
+    cutoff = now - timedelta(days=RENAME_FLAG_DAYS)
+    res = await session.execute(
+        select(Subscription).where(
+            Subscription.enabled == True,  # noqa
+            Subscription.platform == "tiktok",
+            Subscription.first_not_found_at.is_not(None),
+            Subscription.first_not_found_at < cutoff,
+        )
+    )
+    for sub in res.scalars().all():
+        if time.time() - _maint_attempts.get(sub.id, 0.0) < 7 * 86400:
+            continue  # one attempt per sub per week max
+        _maint_attempts[sub.id] = time.time()
+        try:
+            prof = await fetch_tiktok_profile(sub.tiktok_username)
+        except Exception:
+            continue
+        if prof:
+            try:
+                await _try_migrate(session, sub, prof, now)
+            except Exception as e:
+                logger.debug(f"rename migrate failed @{sub.tiktok_username} err={type(e).__name__}")
+
+
+async def _maintenance_avatars(session, now):
+    """Refresh auto avatars (+ id anchors) for stale TikTok rows, max 2/cycle."""
+    from .tiktok import fetch_tiktok_profile
+
+    stale = now - timedelta(days=AVATAR_REFRESH_DAYS)
+    res = await session.execute(
+        select(Subscription).where(
+            Subscription.enabled == True,  # noqa
+            Subscription.platform == "tiktok",
+            or_(
+                Subscription.avatar_checked_at.is_(None),
+                Subscription.avatar_checked_at < stale,
+            ),
+        )
+        .order_by(Subscription.avatar_checked_at.asc().nulls_first())
+        .limit(2)
+    )
+    for sub in res.scalars().all():
+        try:
+            prof = await fetch_tiktok_profile(sub.tiktok_username)
+        except Exception:
+            continue
+        sub.avatar_checked_at = now
+        if not prof:
+            await session.commit()
+            continue
+        if prof["avatar_url"]:
+            sub.avatar_url = prof["avatar_url"]
+        if not sub.tiktok_user_id and prof["user_id"]:
+            sub.tiktok_user_id = prof["user_id"]
+        try:
+            await _try_migrate(session, sub, prof, now)
+        except Exception as e:
+            logger.debug(f"avatar rename check failed @{sub.tiktok_username} err={type(e).__name__}")
+        await session.commit()
+
+
+async def maintenance():
+    """Bounded background upkeep, once per cycle. Never raises."""
+    try:
+        now = datetime.now(timezone.utc)
+        async with async_session() as session:
+            await _maintenance_renames(session, now)
+            await _maintenance_avatars(session, now)
+    except Exception as e:
+        logger.debug(f"maintenance skipped err={type(e).__name__}")
+
+
 async def poll_loop():
     global _is_running
     if _is_running:
@@ -493,6 +646,7 @@ async def poll_loop():
             if len(_last_room_cache) > 500:
                 _last_room_cache.clear()
             result, yt, kk = await poll_cycle()
+            await maintenance()  # rename attempts + avatar refreshes (bounded, best-effort)
             peak = rss_mb()
             logger.info(
                 f"poll sweep checked={result['checked']}+{yt['checked']}+{kk['checked']} "

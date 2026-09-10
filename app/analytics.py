@@ -132,6 +132,15 @@ def daily_series(sessions, f, t, now):
     return [{"date": d, "minutes": int(round(mins[d]))} for d in days]
 
 
+HANDLE_FLAG_DAYS = 3
+
+
+def handle_flagged(sub, now) -> bool:
+    """True when the handle looks renamed/deleted for 3+ days."""
+    first = aware_utc(getattr(sub, "first_not_found_at", None))
+    return bool(first) and (now - first) >= timedelta(days=HANDLE_FLAG_DAYS)
+
+
 def per_creator(subs, sessions, f, t, now, platform: str = ""):
     """Ranked rows (idle desc): the warn/remove shortlist on top."""
     by_sub: dict[int, list] = {}
@@ -158,6 +167,7 @@ def per_creator(subs, sessions, f, t, now, platform: str = ""):
             "has_history": hist,
             "days_idle": idle,
             "status": status_for(idle),
+            "handle_flag": handle_flagged(sub, now),
         })
     rows.sort(key=lambda r: (-r["days_idle"], r["handle"]))
     return rows

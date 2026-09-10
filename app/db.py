@@ -167,9 +167,19 @@ _SUBSCRIPTION_COLS_COMMON = (
     ("color", "VARCHAR(7)"),
     ("platform", "VARCHAR(16) DEFAULT 'tiktok'"),
 )
-# Blob type differs per dialect (BYTEA vs BLOB).
-_SUBSCRIPTION_COLS_SQLITE = _SUBSCRIPTION_COLS_COMMON + (("image_blob", "BLOB"),)
-_SUBSCRIPTION_COLS_PG = _SUBSCRIPTION_COLS_COMMON + (("image_blob", "BYTEA"),)
+# Blob and datetime types differ per dialect.
+_SUBSCRIPTION_COLS_SQLITE = _SUBSCRIPTION_COLS_COMMON + (
+    ("image_blob", "BLOB"),
+    ("tiktok_user_id", "VARCHAR(32)"),
+    ("first_not_found_at", "DATETIME"),
+    ("avatar_checked_at", "DATETIME"),
+)
+_SUBSCRIPTION_COLS_PG = _SUBSCRIPTION_COLS_COMMON + (
+    ("image_blob", "BYTEA"),
+    ("tiktok_user_id", "VARCHAR(32)"),
+    ("first_not_found_at", "TIMESTAMP WITH TIME ZONE"),
+    ("avatar_checked_at", "TIMESTAMP WITH TIME ZONE"),
+)
 _GLOBAL_SETTINGS_COLS_SQLITE = (
     ("ping_everyone", "BOOLEAN DEFAULT 1"),
     ("embed_image_url", "TEXT"),

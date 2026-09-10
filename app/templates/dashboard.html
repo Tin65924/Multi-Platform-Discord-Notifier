@@ -403,7 +403,7 @@ function openEdit(id) {
       </div>
     </div>
     <div id="m_photoRow" style="display:flex; gap:10px; align-items:center">
-      ${s.has_photo ? `<img id="m_preview" src="/api/media/creator/${s.id}" style="width:64px;height:64px;object-fit:cover;border-radius:4px;border:1px solid var(--pt-line-strong)">` : `<span class="mini">No uploaded photo — link (or global) is used.</span>`}
+      ${s.has_photo ? `<img id="m_preview" src="/api/media/creator/${s.id}" style="width:64px;height:64px;object-fit:cover;border-radius:4px;border:1px solid var(--pt-line-strong)">` : `<span class="mini">${s.image_url ? 'Link photo is used.' : (s.has_avatar ? 'Auto avatar from TikTok is used.' : 'Global default photo is used.')}</span>`}
       ${s.has_photo ? `<button onclick="removePhoto()" class="btn btn-danger btn-xs">Remove photo</button>` : ``}
       <span id="m_photoMsg" class="msg" style="margin:0"></span>
     </div>
@@ -752,12 +752,17 @@ async function loadAnalytics() {
       <div class="kpi-bar__fill" style="height:${Math.round(100 * x.minutes / max)}%"></div>
       <div class="kpi-bar__d">${x.date.slice(8)}</div>
     </div>`).join('');
-  const attn = d.rows.filter(x => x.status === 'terminate' || x.status === 'hard');
-  document.getElementById('aAttention').innerHTML = attn.length ? attn.slice(0, 10).map(x => `
+  const attn = d.rows.filter(x => x.status === 'terminate' || x.status === 'hard' || x.handle_flag);
+  document.getElementById('aAttention').innerHTML = attn.length ? attn.slice(0, 12).map(x => `
     <div class="auditrow">
-      <span class="pill pill-st-${x.status}">${ST_LABEL[x.status]}</span>
-      <span class="a">${escapeHtml(x.creator_name || '@' + x.handle)}</span>
-      <span class="d">${x.status === 'terminate' ? 'idle ' + fmtIdle(x.days_idle, x.has_history) + ' — remove from Creators tab' : 'idle ' + fmtIdle(x.days_idle, x.has_history) + ' — remind them'}</span>
+      ${x.handle_flag
+        ? `<span class="pill pill-st-terminate">renamed?</span>
+           <span class="a">${escapeHtml('@' + x.handle)}</span>
+           <span class="d">handle not found 3+ days — update or remove</span>
+           <button onclick="openRelink(${x.id})" class="btn btn-gold btn-xs">Update</button>`
+        : `<span class="pill pill-st-${x.status}">${ST_LABEL[x.status]}</span>
+           <span class="a">${escapeHtml(x.creator_name || '@' + x.handle)}</span>
+           <span class="d">${x.status === 'terminate' ? 'idle ' + fmtIdle(x.days_idle, x.has_history) + ' — remove from Creators tab' : 'idle ' + fmtIdle(x.days_idle, x.has_history) + ' — remind them'}</span>`}
     </div>`).join('') : '<p class="hint" style="margin:0">Nobody needs attention right now.</p>';
   document.getElementById('aTable').innerHTML = d.rows.length ? d.rows.map(x => `
     <div class="auditrow" onclick="openSessions(${x.id})" style="cursor:pointer">
@@ -766,6 +771,28 @@ async function loadAnalytics() {
       <span class="c">${x.sessions}× · ${fmtDur(x.live_minutes)} · ${x.share_pct}%</span>
       <span class="d">last: ${x.last_live_at ? fmtTime(x.last_live_at) : 'never'} (${fmtIdle(x.days_idle, x.has_history)})</span>
     </div>`).join('') : '<p class="hint" style="margin:0">No creators in scope.</p>';
+}
+async function openRelink(id) {
+  const hit = (AROWS || []).find(x => x.id === id);
+  if (!hit) { toast('Creator not loaded', 'err'); return; }
+  openModal('Update handle — @' + hit.handle, `
+    <div><label class="mini">${userLabel(hit.platform)} (style, photo and history are kept)</label>
+    <input id="m_newhandle" placeholder="@newname" value=""></div>
+    <div style="display:flex; gap:10px; align-items:center">
+      <button onclick="saveRelink(${id})" class="btn btn-gold btn-xs">Save</button>
+      <span id="m_relinkMsg" class="msg" style="margin:0"></span>
+    </div>`);
+}
+async function saveRelink(id) {
+  const v = document.getElementById('m_newhandle').value;
+  const r = await api('/api/subscriptions/' + id + '/handle',
+    {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({handle: v})});
+  const m = document.getElementById('m_relinkMsg');
+  const t = r.ok ? (await r.json()).msg : await r.text();
+  m.textContent = t;
+  m.className = r.ok ? 'msg msg-ok' : 'msg msg-err';
+  toast(t, r.ok ? 'ok' : 'err');
+  if (r.ok) { closeModal(); loadSubs(); loadAnalytics(); }
 }
 async function openSessions(id) {
   const hit = (AROWS || []).find(x => x.id === id);
