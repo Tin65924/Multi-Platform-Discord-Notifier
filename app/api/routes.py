@@ -397,7 +397,11 @@ async def update_handle(sub_id: int, payload: HandleUpdate, session: AsyncSessio
     except ValueError as e:
         raise HTTPException(400, str(e))
     if handle == sub.tiktok_username:
-        return {"msg": "Handle unchanged"}
+        # Same handle re-confirmed (e.g. login-walled account flagged by
+        # mistake): clears the rename flag, changes nothing else.
+        sub.first_not_found_at = None
+        await session.commit()
+        return {"msg": "Handle confirmed — flag cleared"}
     dup = await session.execute(
         select(Subscription).where(
             Subscription.platform == (sub.platform or "tiktok"),
