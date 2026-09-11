@@ -209,6 +209,7 @@ async def poll_once():
                 # sessions close, nothing notifies.
                 if sub.first_not_found_at is None:
                     sub.first_not_found_at = now
+                    logger.info(f"handle not resolving @{sub.tiktok_username} — tracking for rename")
                 await _close_open_sessions(session, sub.id, now)
                 await session.commit()
                 await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
@@ -321,6 +322,7 @@ async def poll_youtube():
                 # sessions close, nothing notifies.
                 if sub.first_not_found_at is None:
                     sub.first_not_found_at = now
+                    logger.info(f"handle not resolving @{sub.tiktok_username} — tracking for rename")
                 await _close_open_sessions(session, sub.id, now)
                 await session.commit()
                 await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
@@ -446,6 +448,7 @@ async def poll_kick():
                 # sessions close, nothing notifies.
                 if sub.first_not_found_at is None:
                     sub.first_not_found_at = now
+                    logger.info(f"handle not resolving @{sub.tiktok_username} — tracking for rename")
                 await _close_open_sessions(session, sub.id, now)
                 await session.commit()
                 await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)

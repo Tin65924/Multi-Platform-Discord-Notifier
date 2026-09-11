@@ -165,8 +165,11 @@ class TikTokChecker:
                     except UserNotFoundError:
                         # Dead handle (renamed/deleted) — distinct from offline
                         # so the poller can track and surface it.
+                        logger.info(f"tiktok not_found user={clean}")
                         return LiveInfo(is_live=False, username=clean, error="not_found")
-                    except Exception:
+                    except Exception as e:
+                        # Was silent: this is where IP flags / API changes hide.
+                        logger.info(f"tiktok check failed user={clean} err={type(e).__name__}")
                         return LiveInfo(is_live=False, username=clean)
                     if not live:
                         return LiveInfo(is_live=False, username=clean)
