@@ -21,7 +21,7 @@ from ..security import (
     SESSION_KEY,
     get_current_user,
 )
-from ..tiktok import checker
+from ..tiktok import checker, fetch_tiktok_profile
 from ..webhook import build_embed, send_webhook, platform_label, display_account, resolve_webhook_cfg
 from ..webhook import effective_image, served_photo_url
 from ..images import process_upload, MAX_UPLOAD_BYTES
@@ -317,6 +317,37 @@ async def upload_photo(
                     f"photo for @{sub.tiktok_username} ({mime}, {len(data)}b)")
     return {"msg": "Photo saved — it now shows instead of the link",
             "url": served_photo_url(sub.id), "mime": mime, "bytes": len(data)}
+
+
+@router.post("/subscriptions/{sub_id}/fetch-profile")
+async def fetch_profile(sub_id: int, session: AsyncSession = Depends(get_session), user=Depends(require_admin)):
+    """On-demand profile fetch: stores the auto avatar (+ id anchor).
+
+    Best-effort — TikTok may refuse anonymous fetches (then it 502s with
+    an honest message). Never fails loudly beyond that.
+    """
+    sub = await session.get(Subscription, sub_id)
+    if not sub:
+        raise HTTPException(404, "Not found")
+    if (sub.platform or "tiktok") != "tiktok":
+        raise HTTPException(400, "Profile fetch supports TikTok for now")
+    prof = await fetch_tiktok_profile(sub.tiktok_username)
+    if not prof:
+        raise HTTPException(502, "TikTok didn't return a profile (blocked, or handle renamed?)")
+    now = datetime.now(timezone.utc)
+    sub.avatar_checked_at = now
+    if prof["avatar_url"]:
+        sub.avatar_url = prof["avatar_url"]
+    if prof["user_id"] and not sub.tiktok_user_id:
+        sub.tiktok_user_id = prof["user_id"]
+    await session.commit()
+    await log_audit(user["username"], "profile.fetch", f"fetched profile for @{sub.tiktok_username}")
+    if prof["unique_id"] != sub.tiktok_username:
+        return {"msg": f"That handle now resolves to @{prof['unique_id']} — update it with the New handle field",
+                "avatar_url": sub.avatar_url, "canonical": prof["unique_id"]}
+    if not prof["avatar_url"]:
+        return {"msg": "Profile found, but it has no usable photo", "avatar_url": None}
+    return {"msg": "Profile photo saved", "avatar_url": sub.avatar_url}
 
 
 @router.delete("/subscriptions/{sub_id}/photo")

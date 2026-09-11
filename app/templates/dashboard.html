@@ -404,6 +404,7 @@ function openEdit(id) {
         <div style="display:flex; gap:8px; align-items:center">
           <input id="m_file" type="file" accept="image/jpeg,image/png,image/webp,image/gif" style="font-size:12px">
           <button onclick="uploadPhoto()" class="btn btn-ghost btn-xs">Upload</button>
+          <button onclick="fetchProfile()" class="btn btn-ghost btn-xs">Fetch Profile</button>
         </div>
       </div>
     </div>
@@ -444,6 +445,17 @@ async function uploadPhoto() {
   m.textContent = t;
   m.className = r.ok ? 'msg msg-ok' : 'msg msg-err';
   toast(r.ok ? 'Photo uploaded!' : t, r.ok ? 'ok' : 'err');
+  if (r.ok) { openEdit(EDITING_ID); loadSubs(); }
+}
+async function fetchProfile() {
+  if (!EDITING_ID) return;
+  const m = document.getElementById('m_photoMsg');
+  m.textContent = 'Fetching...'; m.className = 'msg';
+  const r = await api('/api/subscriptions/' + EDITING_ID + '/fetch-profile', {method: 'POST'});
+  const t = r.ok ? (await r.json()).msg : await r.text();
+  m.textContent = t;
+  m.className = r.ok ? 'msg msg-ok' : 'msg msg-err';
+  toast(t, r.ok ? 'ok' : 'err');
   if (r.ok) { openEdit(EDITING_ID); loadSubs(); }
 }
 async function removePhoto() {
