@@ -152,6 +152,14 @@ class TikTokChecker:
             self._locks[clean] = lock
         return client, lock, created
 
+    def evict_missing(self, alive: set[str]) -> int:
+        """Drop cached clients/locks for removed creators (slow anti-accretion)."""
+        dead = [u for u in self._clients if u not in alive]
+        for u in dead:
+            self._clients.pop(u, None)
+            self._locks.pop(u, None)
+        return len(dead)
+
     async def is_live(self, username: str) -> LiveInfo:
         clean = username.strip().lstrip("@").lower()
         client, lock, created = self._client_for(clean)

@@ -643,6 +643,20 @@ async def maintenance():
         async with async_session() as session:
             await _maintenance_renames(session, now)
             await _maintenance_avatars(session, now)
+            # Drop checker clients for removed creators; cap attempt memory.
+            try:
+                from .tiktok import checker as _tt
+
+                rows = await session.execute(
+                    select(Subscription.tiktok_username).where(
+                        Subscription.enabled == True  # noqa
+                    )
+                )
+                _tt.evict_missing({r[0] for r in rows.all()})
+                if len(_maint_attempts) > 500:
+                    _maint_attempts.clear()
+            except Exception:
+                pass
     except Exception as e:
         logger.debug(f"maintenance skipped err={type(e).__name__}")
 

@@ -37,7 +37,8 @@ async def _warm_cookies():
 async def lifespan(app: FastAPI):
     global poll_task
     await init_db()
-    asyncio.create_task(_warm_cookies())
+    if (getattr(settings, "TT_COOKIE_PROVIDER", "off") or "off").lower() != "off":
+        asyncio.create_task(_warm_cookies())
     poll_task = asyncio.create_task(poll_loop())
     logger.info("app started, poller running")
     yield
