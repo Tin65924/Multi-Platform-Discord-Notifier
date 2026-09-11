@@ -590,10 +590,28 @@ async def _maintenance_renames(session, now):
                 logger.debug(f"rename migrate failed @{sub.tiktok_username} err={type(e).__name__}")
 
 
+_avatar_day = {"key": "", "used": 0}
+AVATARS_PER_DAY = 5
+
+
+def _avatar_allowance(now) -> int:
+    """Daily fetch budget (Manila day): 5 different creators max."""
+    from .analytics import MANILA
+
+    key = now.astimezone(MANILA).date().isoformat()
+    if _avatar_day["key"] != key:
+        _avatar_day.update(key=key, used=0)
+    return max(0, AVATARS_PER_DAY - _avatar_day["used"])
+
+
 async def _maintenance_avatars(session, now):
-    """Refresh auto avatars (+ id anchors) for stale TikTok rows, max 2/cycle."""
+    """Refresh auto avatars (+ id anchors): 5 different creators per day,
+    stalest first. Gentle by design — profile fetches are flag fuel."""
     from .tiktok import fetch_tiktok_profile
 
+    budget = _avatar_allowance(now)
+    if budget <= 0:
+        return
     stale = now - timedelta(days=AVATAR_REFRESH_DAYS)
     res = await session.execute(
         select(Subscription).where(
@@ -605,13 +623,14 @@ async def _maintenance_avatars(session, now):
             ),
         )
         .order_by(Subscription.avatar_checked_at.asc().nulls_first())
-        .limit(2)
+        .limit(budget)
     )
     for sub in res.scalars().all():
         try:
             prof = await fetch_tiktok_profile(sub.tiktok_username)
         except Exception:
             continue
+        _avatar_day["used"] += 1  # attempts count, success or fail
         sub.avatar_checked_at = now
         if not prof:
             await session.commit()
