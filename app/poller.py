@@ -522,7 +522,7 @@ async def poll_kick():
     return {"checked": checked, "notified": notified}
 
 
-AVATAR_REFRESH_DAYS = 7
+AVATAR_REFRESH_DAYS = 3
 _maint_attempts: dict[int, float] = {}  # sub_id -> last migrate-attempt epoch
 
 
