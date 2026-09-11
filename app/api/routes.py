@@ -233,6 +233,10 @@ async def list_subs(session: AsyncSession = Depends(get_session), user=Depends(r
             "image_url": s.image_url,
             "has_photo": bool(s.image_mime),
             "has_avatar": bool(s.avatar_url),
+            # Card + browser display URL (relative is fine here): same
+            # upload > link > auto precedence as the Discord embeds.
+            "photo_url": (f"/api/media/creator/{s.id}" if s.image_mime
+                          else (s.image_url or s.avatar_url or None)),
             "color": s.color,
             "last_checked_at": s.last_checked_at.isoformat() if s.last_checked_at else None,
             "last_notified_at": s.last_notified_at.isoformat() if s.last_notified_at else None,

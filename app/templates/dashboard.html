@@ -318,8 +318,8 @@ function renderSubs() {
   else el.innerHTML = rows.map((s, i) => {
     const num = String(i + 1).padStart(2, '0');
     const dot = s.color ? `<span class="dot" style="background:${s.color}" title="${s.color}"></span>` : '';
-    const cover = s.image_url
-      ? `<img src="${s.image_url}" class="thumb" alt="" loading="lazy">`
+    const cover = s.photo_url
+      ? `<img src="${escapeHtml(s.photo_url)}" class="thumb" alt="" loading="lazy">`
       : `<div class="thumb-missing">?</div>`;
     const disp = dispHandle(s);
     const soon = LIVE_CHECKS[platOf(s)] ? '' : `<span><b>polling:</b> soon</span>`;
