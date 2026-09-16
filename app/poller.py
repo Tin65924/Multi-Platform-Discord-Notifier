@@ -207,7 +207,7 @@ async def poll_once():
                 or_(Subscription.platform == "tiktok", Subscription.platform.is_(None)),
             )
         )
-        rows = [(s.id, s.tiktok_username, s.last_live_at) for s in result.scalars().all()]
+        rows = [(s.id, s.tiktok_username, s.last_live_at, s.is_live) for s in result.scalars().all()]
         notify_on = await notifications_enabled(session)
     if not rows:
         return {"checked": 0, "notified": 0}
@@ -219,7 +219,8 @@ async def poll_once():
         return {"checked": 0, "notified": 0, "error": "no webhook"}
 
     # Build lookup: username -> last_live_at (None if never live)
-    live_map = {u: ld for _, u, ld in rows}
+    live_map = {u: ld for _, u, ld, _ in rows}
+    is_live_map = {u: il for _, u, _, il in rows}
 
     # Sort so creators who went live most recently are checked first.
     # None values sort last, so never‑live creators end up at the bottom.
@@ -232,11 +233,24 @@ async def poll_once():
     global _last_sweep_order
     _last_sweep_order = list(usernames)
 
-    by_id = {u: sid for sid, u in rows}
+    by_id = {u: sid for sid, _, _, _ in rows}
     checked = 0
     notified = 0
 
     for username in usernames:
+        # Heal stuck clients: if card has been LIVE for >3h, force fresh client.
+        # This breaks a stale reused TikTokLiveClient that keeps reporting live
+        # after the stream ended (user saw card stuck LIVE hours after 9:30).
+        try:
+            if is_live_map.get(username) and live_map.get(username):
+                ll = live_map[username]
+                if ll and ll.tzinfo is None:
+                    ll = ll.replace(tzinfo=timezone.utc)
+                if ll and (datetime.now(timezone.utc) - ll).total_seconds() > 3 * 3600:
+                    checker._clients.pop(username, None)
+                    checker._locks.pop(username, None)
+        except Exception:
+            pass
         t0 = time.monotonic()
         live_info = await checker.is_live(username)
         duration_ms = int((time.monotonic() - t0) * 1000)
@@ -252,6 +266,11 @@ async def poll_once():
                 if sub.first_not_found_at is None:
                     sub.first_not_found_at = now
                     logger.info(f"handle not resolving @{sub.tiktok_username} — tracking for rename")
+                sub.is_live = False
+                _last_room_cache.pop("tt:" + username, None)
+                # force fresh client next sweep — breaks stale live cache
+                checker._clients.pop(username, None)
+                checker._locks.pop(username, None)
                 await _close_open_sessions(session, sub.id, now)
                 _add_sweep_log(session, "tiktok", username, sub.id, False, "not_found", False, room_id_val, "not_found — tracking rename", duration_ms, now)
                 await session.commit()
@@ -324,8 +343,10 @@ async def poll_once():
                     _add_sweep_log(session, "tiktok", username, sub.id, True, None, False, room_id, detail, duration_ms, now)
             else:
                 sub.is_live = False
+                _last_room_cache.pop("tt:" + username, None)
+                checker._clients.pop(username, None)
+                checker._locks.pop(username, None)
                 await _close_open_sessions(session, sub.id, now)
-                # log offline or error detail
                 detail = "offline" if err is None else f"error:{err}"
                 _add_sweep_log(session, "tiktok", username, sub.id, False, err, False, room_id_val, detail, duration_ms, now)
 
@@ -383,6 +404,8 @@ async def poll_youtube():
                 if sub.first_not_found_at is None:
                     sub.first_not_found_at = now
                     logger.info(f"handle not resolving @{sub.tiktok_username} — tracking for rename")
+                sub.is_live = False
+                _last_room_cache.pop("yt:" + handle, None)
                 await _close_open_sessions(session, sub.id, now)
                 _add_sweep_log(session, "youtube", handle, sub.id, False, "not_found", False, room_id_val, "not_found — tracking rename", duration_ms, now)
                 await session.commit()
@@ -454,6 +477,7 @@ async def poll_youtube():
                     _add_sweep_log(session, "youtube", handle, sub.id, True, None, False, room_id, detail, duration_ms, now)
             else:
                 sub.is_live = False
+                _last_room_cache.pop("yt:" + handle, None)
                 await _close_open_sessions(session, sub.id, now)
                 detail = "offline" if err is None else f"error:{err}"
                 _add_sweep_log(session, "youtube", handle, sub.id, False, err, False, room_id_val, detail, duration_ms, now)
@@ -516,6 +540,8 @@ async def poll_kick():
                 if sub.first_not_found_at is None:
                     sub.first_not_found_at = now
                     logger.info(f"handle not resolving @{sub.tiktok_username} — tracking for rename")
+                sub.is_live = False
+                _last_room_cache.pop("kk:" + handle, None)
                 await _close_open_sessions(session, sub.id, now)
                 _add_sweep_log(session, "kick", handle, sub.id, False, "not_found", False, room_id_val, "not_found — tracking rename", None, now)
                 await session.commit()
@@ -587,6 +613,7 @@ async def poll_kick():
                     _add_sweep_log(session, "kick", handle, sub.id, True, None, False, room_id, detail, None, now)
             else:
                 sub.is_live = False
+                _last_room_cache.pop("kk:" + handle, None)
                 await _close_open_sessions(session, sub.id, now)
                 detail = "offline" if err is None else f"error:{err}"
                 _add_sweep_log(session, "kick", handle, sub.id, False, err, False, room_id_val, detail, None, now)
@@ -717,6 +744,40 @@ async def maintenance():
         now = datetime.now(timezone.utc)
         async with async_session() as session:
             await _maintenance_renames(session, now)
+            # Auto-heal stuck LIVE cards (user reported 7:00-9:30 still LIVE at 10:48)
+            # If a card has been LIVE for >3h, it's likely a stale reused client.
+            try:
+                stuck_cut = now - timedelta(hours=3)
+                res = await session.execute(
+                    select(Subscription).where(
+                        Subscription.is_live == True,  # noqa
+                        Subscription.last_live_at != None,  # noqa
+                        Subscription.last_live_at < stuck_cut,
+                    )
+                )
+                for sub in res.scalars().all():
+                    lc = sub.last_checked_at
+                    if lc is not None:
+                        if lc.tzinfo is None:
+                            lc = lc.replace(tzinfo=timezone.utc)
+                        if (now - lc).total_seconds() > 3600:
+                            continue  # not checked recently — let next sweep decide
+                    sub.is_live = False
+                    prefix = "tt:" if (sub.platform or "tiktok") == "tiktok" else f"{sub.platform}:"
+                    _last_room_cache.pop(prefix + sub.tiktok_username, None)
+                    if (sub.platform or "tiktok") == "tiktok":
+                        try:
+                            from .tiktok import checker as _tt2
+                            _tt2._clients.pop(sub.tiktok_username, None)
+                            _tt2._locks.pop(sub.tiktok_username, None)
+                        except Exception:
+                            pass
+                    await _close_open_sessions(session, sub.id, now)
+                    _add_sweep_log(session, sub.platform or "tiktok", sub.tiktok_username, sub.id, False, None, False, None, "auto-heal stuck LIVE -> offline", None, now)
+                    logger.info(f"auto-heal stuck LIVE @{sub.tiktok_username} last_live {sub.last_live_at} -> offline")
+                await session.commit()
+            except Exception as e:
+                logger.debug(f"stuck heal skipped err={type(e).__name__}")
             # _maintenance_avatars removed: avatars now refresh on-notify
             # (fresh avatar fetched right before each notification and saved to card)
             # Drop checker clients for removed creators; cap attempt memory.
