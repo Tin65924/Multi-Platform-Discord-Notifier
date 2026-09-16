@@ -257,6 +257,7 @@ async def poll_once():
     notified = 0
 
     for username in usernames:
+        checked += 1
         # Heal stuck clients: if card has been LIVE for >3h, force fresh client.
         # This breaks a stale reused TikTokLiveClient that keeps reporting live
         # after the stream ended (user saw card stuck LIVE hours after 9:30).
