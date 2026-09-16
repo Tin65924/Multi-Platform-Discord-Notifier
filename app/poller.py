@@ -20,6 +20,22 @@ settings = get_settings()
 
 _last_room_cache: dict[str, str] = {}
 _is_running = False
+_next_sweep_at: datetime | None = None
+_last_sweep_at: datetime | None = None
+_sweep_in_progress: bool = False
+_last_sweep_order: list[str] = []  # usernames in last sort order (for per-creator ETA)
+
+
+def get_schedule_state() -> dict:
+    """Snapshot for /api/schedule — cheap, no DB."""
+    return {
+        "next_sweep_at": _next_sweep_at.isoformat() if _next_sweep_at else None,
+        "last_sweep_at": _last_sweep_at.isoformat() if _last_sweep_at else None,
+        "in_progress": _sweep_in_progress or _sweep_lock.locked(),
+        "interval": int(settings.CHECK_INTERVAL_SECONDS),
+        "jitter": int(settings.CHECK_JITTER_SECONDS),
+        "per_check_sleep": float(settings.PER_CHECK_SLEEP_SECONDS),
+    }
 
 
 def rss_mb() -> float | None:
@@ -212,6 +228,9 @@ async def poll_once():
         key=lambda u: live_map.get(u) or datetime.min.replace(tzinfo=timezone.utc),
         reverse=True,
     )
+    # Expose order for schedule ETA (next sweep = _next_sweep_at + index*PER_CHECK_SLEEP)
+    global _last_sweep_order
+    _last_sweep_order = list(usernames)
 
     by_id = {u: sid for sid, u in rows}
     checked = 0
@@ -719,16 +738,20 @@ async def maintenance():
 
 
 async def poll_loop():
-    global _is_running
+    global _is_running, _next_sweep_at, _last_sweep_at, _sweep_in_progress
     if _is_running:
         return
     _is_running = True
     logger.info(f"poller started interval={settings.CHECK_INTERVAL_SECONDS}s local comfort")
+    # first next estimate so schedule page has data before first sweep finishes
+    _next_sweep_at = datetime.now(timezone.utc) + timedelta(seconds=settings.CHECK_INTERVAL_SECONDS)
     while True:
         try:
             # Bound the dedup cache: keys are per-creator, but never evicted.
             if len(_last_room_cache) > 500:
                 _last_room_cache.clear()
+            _sweep_in_progress = True
+            _last_sweep_at = datetime.now(timezone.utc)
             result, yt, kk = await poll_cycle()
             await maintenance()  # rename attempts + avatar refreshes (bounded, best-effort)
             peak = rss_mb()
@@ -738,9 +761,6 @@ async def poll_loop():
                 f"rss={peak}MB cur={rss_current_mb()}MB"
             )
             if should_recycle(peak):
-                # Still climbing past the ceiling toward Render's 512MB kill
-                # line: exit cleanly between sweeps so Render restarts fresh.
-                # ~60s gap; the DB cooldown + session rows guard duplicates.
                 logger.warning(f"memory ceiling hit (peak {peak}MB) — recycling process")
                 import os as _os
 
@@ -749,4 +769,10 @@ async def poll_loop():
             break
         except Exception as e:
             logger.exception(f"poll_loop error {type(e).__name__}")
-        await asyncio.sleep(settings.CHECK_INTERVAL_SECONDS + random.uniform(0, settings.CHECK_JITTER_SECONDS))
+        finally:
+            _sweep_in_progress = False
+        # schedule next sweep (jitter chosen now so API can show accurate ETA)
+        _next_sweep_at = datetime.now(timezone.utc) + timedelta(
+            seconds=settings.CHECK_INTERVAL_SECONDS + random.uniform(0, settings.CHECK_JITTER_SECONDS)
+        )
+        await asyncio.sleep((_next_sweep_at - datetime.now(timezone.utc)).total_seconds())

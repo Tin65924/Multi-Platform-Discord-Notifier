@@ -9,6 +9,7 @@
 <button data-tab="send" id="tabSend" onclick="showTab('send')" class="pt-nav__link hidden">Send</button>
 <button data-tab="analytics" onclick="showTab('analytics')" class="pt-nav__link">Analytics</button>
 <button data-tab="logs" onclick="showTab('logs')" class="pt-nav__link">Logs</button>
+<button data-tab="schedule" onclick="showTab('schedule')" class="pt-nav__link">Schedule</button>
 {% endblock %}
 
 {% block userbox %}<span id="whoami"></span><button onclick="logout()" class="btn btn-ghost btn-xs">Logout</button>{% endblock %}
@@ -188,6 +189,34 @@
     </div>
   </section>
 
+  <!-- Schedule (admin + superadmin) -->
+  <section id="tab-schedule" class="hidden" style="margin-top:1.5rem">
+    <div class="card">
+      <h2>Scheduled Sweeps</h2>
+      <p class="hint">Global sweep every <span id="schedInterval">—</span>s + jitter, all creators each sweep (1s apart). Active creators first.</p>
+      <div class="kpi-grid">
+        <div class="kpi"><div class="kpi__v" id="schedNextIn">—</div><div class="kpi__k">Next sweep in</div></div>
+        <div class="kpi"><div class="kpi__v" id="schedNextAt" style="font-size:13px">—</div><div class="kpi__k">Next sweep at</div></div>
+        <div class="kpi"><div class="kpi__v" id="schedLastAt" style="font-size:13px">—</div><div class="kpi__k">Last sweep</div></div>
+        <div class="kpi"><div class="kpi__v" id="schedDur">—</div><div class="kpi__k">Est. sweep length</div></div>
+      </div>
+      <div id="schedStatus" class="msg" style="margin-top:10px"></div>
+      <div style="display:flex; gap:8px; margin-top:10px">
+        <button onclick="loadSchedule()" class="btn btn-ghost btn-xs">Refresh</button>
+        <span class="hint" style="margin:0; align-self:center">Auto-refreshes when tab is open.</span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Per-creator next check</h2>
+      <p class="hint">Position = poll order (active first). ETA = next_sweep + position × 1.0s.</p>
+      <div style="display:flex; gap:8px; margin-bottom:10px">
+        <input id="schedSearch" placeholder="filter handle..." style="max-width:220px">
+        <select id="schedPlat" style="max-width:140px"><option value="">All platforms</option><option value="tiktok">TikTok</option><option value="youtube">YouTube</option><option value="kick">Kick</option><option value="twitch">Twitch</option></select>
+      </div>
+      <div id="schedTable" style="display:grid; gap:6px"></div>
+    </div>
+  </section>
+
   <!-- Send test message (superadmin only) -->
   <section id="tab-send" class="hidden" style="margin-top:1.5rem">
     <div class="card">
@@ -238,7 +267,7 @@ async function api(path, opts={}, _retried=false) {
   return r;
 }
 function showTab(name) {
-  ['creators','webhook','admins','audit','send','analytics','logs'].forEach(t => {
+  ['creators','webhook','admins','audit','send','analytics','logs','schedule'].forEach(t => {
     const sec = document.getElementById('tab-'+t);
     if (sec) sec.classList.toggle('hidden', t !== name);
     const btn = document.querySelector(`[data-tab="${t}"]`);
@@ -248,6 +277,7 @@ function showTab(name) {
   if (name === 'admins') loadAdmins();
   if (name === 'analytics') loadAnalytics();
   if (name === 'logs') { loadLogMeta(); loadLogs(); }
+  if (name === 'schedule') loadSchedule();
 }
 async function boot() {
   const r = await api('/api/me');
@@ -1001,6 +1031,62 @@ async function copyLogs() {
     ta.remove();
   }
 }
+// --- schedule (admin + superadmin): next sweep + per-creator ETA ---
+let SCHED = null;
+let SCHED_TICK = null;
+function fmtSchedCountdown(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z');
+  if (isNaN(d)) return '—';
+  const diff = (d - new Date()) / 1000;
+  if (diff <= 0) return 'now';
+  if (diff < 60) return Math.ceil(diff) + 's';
+  const m = Math.floor(diff/60), s = Math.ceil(diff%60);
+  return m + 'm ' + s + 's';
+}
+function renderSchedule() {
+  if (!SCHED) return;
+  document.getElementById('schedInterval').textContent = `${SCHED.interval} + 0–${SCHED.jitter}`;
+  document.getElementById('schedNextIn').textContent = fmtSchedCountdown(SCHED.next_sweep_at);
+  document.getElementById('schedNextAt').textContent = SCHED.next_sweep_at ? fmtTime(SCHED.next_sweep_at) : '—';
+  document.getElementById('schedLastAt').textContent = SCHED.last_sweep_at ? fmtTime(SCHED.last_sweep_at) : '—';
+  document.getElementById('schedDur').textContent = SCHED.estimated_sweep_seconds ? SCHED.estimated_sweep_seconds + 's' : '—';
+  const st = document.getElementById('schedStatus');
+  if (SCHED.in_progress) st.textContent = 'Sweep in progress…';
+  else {
+    const left = SCHED.next_sweep_at ? fmtSchedCountdown(SCHED.next_sweep_at) : '—';
+    st.textContent = `Idle — next sweep in ${left}. Per-creator checks are 1.0s apart.`;
+  }
+  const q = (document.getElementById('schedSearch')?.value || '').toLowerCase();
+  const plat = document.getElementById('schedPlat')?.value || '';
+  let rows = SCHED.per_creator || [];
+  if (plat) rows = rows.filter(r => (r.platform||'').toLowerCase() === plat.toLowerCase());
+  if (q) rows = rows.filter(r => (r.handle||'').toLowerCase().includes(q) || (r.author_name||'').toLowerCase().includes(q));
+  const el = document.getElementById('schedTable');
+  if (!rows.length) { el.innerHTML = '<p class="hint" style="margin:0">No creators match filter.</p>'; return; }
+  el.innerHTML = rows.map(r => {
+    const eta = r.next_check_at ? fmtTime(r.next_check_at) : '—';
+    const inSec = r.next_check_at ? fmtSchedCountdown(r.next_check_at) : '—';
+    const live = r.is_live ? '<span class="pill pill-live">LIVE</span>' : '<span class="pill pill-off">offline</span>';
+    return `<div class="auditrow">
+      <span class="t">#${r.position}</span>
+      <span class="a">${escapeHtml(r.platform)} ${escapeHtml(r.handle ? '@'+r.handle : '')}</span>
+      <span class="c">${live}</span>
+      <span class="d">next: ${eta} <span class="mini">(${inSec})</span> · last live: ${r.last_live_at?fmtTime(r.last_live_at):'never'}</span>
+    </div>`;
+  }).join('');
+}
+async function loadSchedule() {
+  const r = await api('/api/schedule');
+  if (!r.ok) { toast(await r.text(), 'err'); return; }
+  SCHED = await r.json();
+  renderSchedule();
+  if (SCHED_TICK) clearInterval(SCHED_TICK);
+  SCHED_TICK = setInterval(renderSchedule, 1000);
+}
+// live filter for schedule table (no extra fetch)
+document.getElementById('schedSearch')?.addEventListener('input', renderSchedule);
+document.getElementById('schedPlat')?.addEventListener('change', renderSchedule);
 // Enter in search/handle triggers filter
 document.getElementById('logQ')?.addEventListener('keydown', e => { if (e.key === 'Enter') loadLogs(); });
 document.getElementById('logHandle')?.addEventListener('keydown', e => { if (e.key === 'Enter') loadLogs(); });
