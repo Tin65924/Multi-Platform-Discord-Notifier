@@ -176,9 +176,8 @@ class TikTokChecker:
                         logger.info(f"tiktok not_found user={clean}")
                         return LiveInfo(is_live=False, username=clean, error="not_found")
                     except Exception as e:
-                        # Was silent: this is where IP flags / API changes hide.
                         logger.info(f"tiktok check failed user={clean} err={type(e).__name__}")
-                        return LiveInfo(is_live=False, username=clean)
+                        return LiveInfo(is_live=False, username=clean, error="check_failed")
                     if not live:
                         return LiveInfo(is_live=False, username=clean)
                     # Live — resolve the session id for dedup (best effort).
@@ -197,10 +196,10 @@ class TikTokChecker:
                         logger.debug(f"room_id failed user={clean} err={type(e).__name__}")
                     return LiveInfo(is_live=True, room_id=room_id, username=clean)
                 except asyncio.TimeoutError:
-                    return LiveInfo(is_live=False, username=clean)
+                    return LiveInfo(is_live=False, username=clean, error="check_failed")
                 except Exception as e:
                     logger.warning(f"tiktok error user={clean} err={type(e).__name__}")
-                    return LiveInfo(is_live=False, username=clean)
+                    return LiveInfo(is_live=False, username=clean, error="check_failed")
 
 
 checker = TikTokChecker()

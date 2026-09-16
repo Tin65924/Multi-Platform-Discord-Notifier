@@ -24,6 +24,7 @@ _next_sweep_at: datetime | None = None
 _last_sweep_at: datetime | None = None
 _sweep_in_progress: bool = False
 _last_sweep_order: list[str] = []  # usernames in last sort order (for per-creator ETA)
+_last_client_evict: float = 0.0
 
 
 def get_schedule_state() -> dict:
@@ -296,6 +297,13 @@ async def poll_once():
                 continue
             if err is None and sub.first_not_found_at is not None:
                 sub.first_not_found_at = None  # clean read clears streak
+
+            if err == "check_failed":
+                # Inconclusive (IP flag / timeout) — keep last known card state
+                await _add_sweep_log("tiktok", username, sub.id, None, "check_failed", False, room_id_val, "inconclusive:check_failed", duration_ms, now)
+                await session.commit()
+                await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
+                continue
 
             if live_info.is_live:
                 room_id = live_info.room_id or f"live-{username}"
@@ -796,6 +804,21 @@ async def maintenance():
                 await session.commit()
             except Exception as e:
                 logger.debug(f"stuck heal skipped err={type(e).__name__}")
+            # Periodic fresh-client sweep — breaks a stale reused TikTokLiveClient
+            # that can keep reporting live=True hours after the stream ended.
+            # Runs every 30m and never touches the DB beyond the evict_missing below.
+            try:
+                global _last_client_evict
+                if time.time() - _last_client_evict > 1800:
+                    from .tiktok import checker as _ttc
+                    n = len(_ttc._clients)
+                    if n:
+                        _ttc._clients.clear()
+                        _ttc._locks.clear()
+                        logger.info(f"tiktok clients periodic refresh ({n} evicted)")
+                    _last_client_evict = time.time()
+            except Exception:
+                pass
             # _maintenance_avatars removed: avatars now refresh on-notify
             # (fresh avatar fetched right before each notification and saved to card)
             # Drop checker clients for removed creators; cap attempt memory.
