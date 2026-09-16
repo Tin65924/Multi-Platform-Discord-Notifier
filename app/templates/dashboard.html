@@ -407,6 +407,7 @@ function renderSubs() {
           <button onclick="delSub(${s.id})" class="btn btn-danger btn-xs">Remove</button>
           <button onclick="testSub(${s.id})" class="btn btn-ghost btn-xs">Test</button>
           <button onclick="forceSub(${s.id})" class="btn btn-gold btn-xs" style="grid-column:1/-1">Force notification</button>
+          ${s.is_live ? `<button onclick="markOffline(${s.id})" class="btn btn-ghost btn-xs" style="grid-column:1/-1; border-color:var(--pt-brick); color:var(--pt-brick)">Mark offline — fix stuck LIVE</button>` : ''}
         </div>
       </div>
     </div>`;
@@ -595,6 +596,13 @@ async function forceSub(id) {
   const r = await api('/api/subscriptions/'+id+'/force-notify', {method:'POST'});
   const t = r.ok ? (await r.json()).msg : await r.text();
   toast(t, r.ok ? 'ok' : 'err');
+}
+async function markOffline(id) {
+  if (!confirm('Mark this creator as offline? Fixes a stuck LIVE card. Next sweep will re-check fresh.')) return;
+  const r = await api('/api/subscriptions/'+id+'/mark-offline', {method:'POST'});
+  const t = r.ok ? (await r.json()).msg : await r.text();
+  toast(t, r.ok ? 'ok' : 'err');
+  if (r.ok) loadSubs();
 }
 async function testSub(id){ const r = await api('/api/subscriptions/'+id+'/test',{method:'POST'}); toast(r.ok?'Test sent! Check Discord.':await r.text(), r.ok ? 'ok' : 'err'); }
 async function delSub(id){

@@ -606,6 +606,37 @@ async def update_handle(sub_id: int, payload: HandleUpdate, session: AsyncSessio
     return {"msg": f"Updated @{old} to @{handle} — next sweep picks up their live"}
 
 
+@router.post("/subscriptions/{sub_id}/mark-offline")
+async def mark_offline(sub_id: int, session: AsyncSession = Depends(get_session), user=Depends(require_admin)):
+    """Force a creator's card to offline (fixes stuck LIVE).
+
+    Closes open LiveSessions, clears dedup cache and evicts the reused
+    TikTok client so the next sweep does a fresh check. Admins + superadmins.
+    """
+    sub = await session.get(Subscription, sub_id)
+    if not sub:
+        raise HTTPException(404, "Not found")
+    sub.is_live = False
+    # clear dedup cache for all possible prefixes
+    try:
+        from ..poller import _last_room_cache, _close_open_sessions
+        for pfx in ("tt:", "yt:", "kk:", "twitch:"):
+            _last_room_cache.pop(pfx + sub.tiktok_username, None)
+        if (sub.platform or "tiktok") == "tiktok":
+            try:
+                from ..tiktok import checker
+                checker._clients.pop(sub.tiktok_username, None)
+                checker._locks.pop(sub.tiktok_username, None)
+            except Exception:
+                pass
+        await _close_open_sessions(session, sub.id, datetime.now(timezone.utc))
+    except Exception:
+        pass
+    await session.commit()
+    await log_audit(user["username"], "creator.offline", f"marked @{sub.tiktok_username} offline")
+    return {"msg": f"Marked @{sub.tiktok_username} offline — next sweep will re-check fresh"}
+
+
 @router.delete("/subscriptions/{sub_id}")
 async def delete_sub(sub_id: int, session: AsyncSession = Depends(get_session), user=Depends(require_admin)):
     sub = await session.get(Subscription, sub_id)

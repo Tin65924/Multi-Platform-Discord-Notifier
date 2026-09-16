@@ -172,19 +172,37 @@ async def _close_open_sessions(session, sub_id: int, now):
         o.ended_at = now
 
 
-def _add_sweep_log(session, platform: str, handle: str, sub_id: int | None,
+async def _add_sweep_log(platform: str, handle: str, sub_id: int | None,
                    is_live: bool | None, error: str | None, notified: bool,
                    room_id: str | None, detail: str | None, duration_ms: int | None, now):
-    """Queue a SweepLog row in the given session (caller commits). Best-effort."""
+    """Insert a SweepLog row in its own session (never breaks caller)."""
     try:
-        session.add(SweepLog(
-            platform=platform, handle=handle, subscription_id=sub_id,
-            is_live=is_live, error=(error or None), notified=bool(notified),
-            room_id=(room_id or None), detail=(detail or "")[:500] or None,
-            duration_ms=duration_ms, created_at=now,
-        ))
-    except Exception:
-        pass
+        async with async_session() as _s:
+            _s.add(SweepLog(
+                platform=platform, handle=handle, subscription_id=sub_id,
+                is_live=is_live, error=(error or None), notified=bool(notified),
+                room_id=(room_id or None), detail=(detail or "")[:500] or None,
+                duration_ms=duration_ms, created_at=now,
+            ))
+            await _s.commit()
+    except Exception as e:
+        if 'sweep_logs' in str(e).lower() or 'no such table' in str(e).lower():
+            try:
+                from .db import Base, engine
+                async with engine.begin() as conn:
+                    await conn.run_sync(Base.metadata.create_all)
+                async with async_session() as _s2:
+                    _s2.add(SweepLog(
+                        platform=platform, handle=handle, subscription_id=sub_id,
+                        is_live=is_live, error=(error or None), notified=bool(notified),
+                        room_id=(room_id or None), detail=(detail or "")[:500] or None,
+                        duration_ms=duration_ms, created_at=now,
+                    ))
+                    await _s2.commit()
+            except Exception:
+                pass
+        else:
+            logger.debug(f'sweep_log failed {type(e).__name__}')
 
 
 async def get_global_settings():
@@ -272,7 +290,7 @@ async def poll_once():
                 checker._clients.pop(username, None)
                 checker._locks.pop(username, None)
                 await _close_open_sessions(session, sub.id, now)
-                _add_sweep_log(session, "tiktok", username, sub.id, False, "not_found", False, room_id_val, "not_found — tracking rename", duration_ms, now)
+                await _add_sweep_log( "tiktok", username, sub.id, False, "not_found", False, room_id_val, "not_found — tracking rename", duration_ms, now)
                 await session.commit()
                 await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                 continue
@@ -284,7 +302,7 @@ async def poll_once():
                 if _last_room_cache.get("tt:" + username) == room_id:
                     sub.is_live = True
                     await _open_session(session, sub, room_id, now)
-                    _add_sweep_log(session, "tiktok", username, sub.id, True, None, False, room_id, "dedup skip — same room", duration_ms, now)
+                    await _add_sweep_log( "tiktok", username, sub.id, True, None, False, room_id, "dedup skip — same room", duration_ms, now)
                     await session.commit()
                     await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                     continue
@@ -293,7 +311,7 @@ async def poll_once():
                         _last_room_cache["tt:" + username] = room_id
                         sub.is_live = True
                         await _open_session(session, sub, room_id, now)
-                        _add_sweep_log(session, "tiktok", username, sub.id, True, None, False, room_id, "cooldown skip — 15m", duration_ms, now)
+                        await _add_sweep_log( "tiktok", username, sub.id, True, None, False, room_id, "cooldown skip — 15m", duration_ms, now)
                         await session.commit()
                         await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                         continue
@@ -321,7 +339,7 @@ async def poll_once():
                 sess_row = await _open_session(session, sub, room_id, now)
                 if sess_row.notified:
                     sub.is_live = True
-                    _add_sweep_log(session, "tiktok", username, sub.id, True, None, False, room_id, "already notified this room", duration_ms, now)
+                    await _add_sweep_log( "tiktok", username, sub.id, True, None, False, room_id, "already notified this room", duration_ms, now)
                     await session.commit()
                     await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                     continue
@@ -337,10 +355,10 @@ async def poll_once():
                     notified += 1
                     _last_room_cache["tt:" + username] = room_id
                     logger.info(f"notified @{username}")
-                    _add_sweep_log(session, "tiktok", username, sub.id, True, None, True, room_id, "notified", duration_ms, now)
+                    await _add_sweep_log( "tiktok", username, sub.id, True, None, True, room_id, "notified", duration_ms, now)
                 else:
                     detail = "live but notifications paused" if not notify_on else f"live — webhook failed"
-                    _add_sweep_log(session, "tiktok", username, sub.id, True, None, False, room_id, detail, duration_ms, now)
+                    await _add_sweep_log( "tiktok", username, sub.id, True, None, False, room_id, detail, duration_ms, now)
             else:
                 sub.is_live = False
                 _last_room_cache.pop("tt:" + username, None)
@@ -348,7 +366,7 @@ async def poll_once():
                 checker._locks.pop(username, None)
                 await _close_open_sessions(session, sub.id, now)
                 detail = "offline" if err is None else f"error:{err}"
-                _add_sweep_log(session, "tiktok", username, sub.id, False, err, False, room_id_val, detail, duration_ms, now)
+                await _add_sweep_log( "tiktok", username, sub.id, False, err, False, room_id_val, detail, duration_ms, now)
 
             await session.commit()
             await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
@@ -407,7 +425,7 @@ async def poll_youtube():
                 sub.is_live = False
                 _last_room_cache.pop("yt:" + handle, None)
                 await _close_open_sessions(session, sub.id, now)
-                _add_sweep_log(session, "youtube", handle, sub.id, False, "not_found", False, room_id_val, "not_found — tracking rename", duration_ms, now)
+                await _add_sweep_log( "youtube", handle, sub.id, False, "not_found", False, room_id_val, "not_found — tracking rename", duration_ms, now)
                 await session.commit()
                 await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                 continue
@@ -416,7 +434,7 @@ async def poll_youtube():
 
             if live_info.error and not live_info.is_live:
                 logger.debug(f"youtube check inconclusive user={handle} err={live_info.error}")
-                _add_sweep_log(session, "youtube", handle, sub.id, None, live_info.error, False, room_id_val, f"inconclusive:{live_info.error}", duration_ms, now)
+                await _add_sweep_log( "youtube", handle, sub.id, None, live_info.error, False, room_id_val, f"inconclusive:{live_info.error}", duration_ms, now)
                 await session.commit()
                 await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                 continue
@@ -426,7 +444,7 @@ async def poll_youtube():
                 if _last_room_cache.get("yt:" + handle) == room_id:
                     sub.is_live = True
                     await _open_session(session, sub, room_id, now)
-                    _add_sweep_log(session, "youtube", handle, sub.id, True, None, False, room_id, "dedup skip — same room", duration_ms, now)
+                    await _add_sweep_log( "youtube", handle, sub.id, True, None, False, room_id, "dedup skip — same room", duration_ms, now)
                     await session.commit()
                     await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                     continue
@@ -435,7 +453,7 @@ async def poll_youtube():
                         _last_room_cache["yt:" + handle] = room_id
                         sub.is_live = True
                         await _open_session(session, sub, room_id, now)
-                        _add_sweep_log(session, "youtube", handle, sub.id, True, None, False, room_id, "cooldown skip — 15m", duration_ms, now)
+                        await _add_sweep_log( "youtube", handle, sub.id, True, None, False, room_id, "cooldown skip — 15m", duration_ms, now)
                         await session.commit()
                         await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                         continue
@@ -455,7 +473,7 @@ async def poll_youtube():
                 sess_row = await _open_session(session, sub, room_id, now)
                 if sess_row.notified:
                     sub.is_live = True
-                    _add_sweep_log(session, "youtube", handle, sub.id, True, None, False, room_id, "already notified this room", duration_ms, now)
+                    await _add_sweep_log( "youtube", handle, sub.id, True, None, False, room_id, "already notified this room", duration_ms, now)
                     await session.commit()
                     await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                     continue
@@ -471,16 +489,16 @@ async def poll_youtube():
                     notified += 1
                     _last_room_cache["yt:" + handle] = room_id
                     logger.info(f"notified yt {disp}")
-                    _add_sweep_log(session, "youtube", handle, sub.id, True, None, True, room_id, "notified", duration_ms, now)
+                    await _add_sweep_log( "youtube", handle, sub.id, True, None, True, room_id, "notified", duration_ms, now)
                 else:
                     detail = "live but notifications paused" if not notify_on else "live — webhook failed"
-                    _add_sweep_log(session, "youtube", handle, sub.id, True, None, False, room_id, detail, duration_ms, now)
+                    await _add_sweep_log( "youtube", handle, sub.id, True, None, False, room_id, detail, duration_ms, now)
             else:
                 sub.is_live = False
                 _last_room_cache.pop("yt:" + handle, None)
                 await _close_open_sessions(session, sub.id, now)
                 detail = "offline" if err is None else f"error:{err}"
-                _add_sweep_log(session, "youtube", handle, sub.id, False, err, False, room_id_val, detail, duration_ms, now)
+                await _add_sweep_log( "youtube", handle, sub.id, False, err, False, room_id_val, detail, duration_ms, now)
 
             await session.commit()
             await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
@@ -543,7 +561,7 @@ async def poll_kick():
                 sub.is_live = False
                 _last_room_cache.pop("kk:" + handle, None)
                 await _close_open_sessions(session, sub.id, now)
-                _add_sweep_log(session, "kick", handle, sub.id, False, "not_found", False, room_id_val, "not_found — tracking rename", None, now)
+                await _add_sweep_log( "kick", handle, sub.id, False, "not_found", False, room_id_val, "not_found — tracking rename", None, now)
                 await session.commit()
                 await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                 continue
@@ -552,7 +570,7 @@ async def poll_kick():
 
             if live_info.error and not live_info.is_live:
                 logger.debug(f"kick check inconclusive user={handle} err={live_info.error}")
-                _add_sweep_log(session, "kick", handle, sub.id, None, live_info.error, False, room_id_val, f"inconclusive:{live_info.error}", None, now)
+                await _add_sweep_log( "kick", handle, sub.id, None, live_info.error, False, room_id_val, f"inconclusive:{live_info.error}", None, now)
                 await session.commit()
                 await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                 continue
@@ -562,7 +580,7 @@ async def poll_kick():
                 if _last_room_cache.get("kk:" + handle) == room_id:
                     sub.is_live = True
                     await _open_session(session, sub, room_id, now)
-                    _add_sweep_log(session, "kick", handle, sub.id, True, None, False, room_id, "dedup skip — same room", None, now)
+                    await _add_sweep_log( "kick", handle, sub.id, True, None, False, room_id, "dedup skip — same room", None, now)
                     await session.commit()
                     await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                     continue
@@ -571,7 +589,7 @@ async def poll_kick():
                         _last_room_cache["kk:" + handle] = room_id
                         sub.is_live = True
                         await _open_session(session, sub, room_id, now)
-                        _add_sweep_log(session, "kick", handle, sub.id, True, None, False, room_id, "cooldown skip — 15m", None, now)
+                        await _add_sweep_log( "kick", handle, sub.id, True, None, False, room_id, "cooldown skip — 15m", None, now)
                         await session.commit()
                         await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                         continue
@@ -591,7 +609,7 @@ async def poll_kick():
                 sess_row = await _open_session(session, sub, room_id, now)
                 if sess_row.notified:
                     sub.is_live = True
-                    _add_sweep_log(session, "kick", handle, sub.id, True, None, False, room_id, "already notified this room", None, now)
+                    await _add_sweep_log( "kick", handle, sub.id, True, None, False, room_id, "already notified this room", None, now)
                     await session.commit()
                     await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                     continue
@@ -607,16 +625,16 @@ async def poll_kick():
                     notified += 1
                     _last_room_cache["kk:" + handle] = room_id
                     logger.info(f"notified kick {disp}")
-                    _add_sweep_log(session, "kick", handle, sub.id, True, None, True, room_id, "notified", None, now)
+                    await _add_sweep_log( "kick", handle, sub.id, True, None, True, room_id, "notified", None, now)
                 else:
                     detail = "live but notifications paused" if not notify_on else "live — webhook failed"
-                    _add_sweep_log(session, "kick", handle, sub.id, True, None, False, room_id, detail, None, now)
+                    await _add_sweep_log( "kick", handle, sub.id, True, None, False, room_id, detail, None, now)
             else:
                 sub.is_live = False
                 _last_room_cache.pop("kk:" + handle, None)
                 await _close_open_sessions(session, sub.id, now)
                 detail = "offline" if err is None else f"error:{err}"
-                _add_sweep_log(session, "kick", handle, sub.id, False, err, False, room_id_val, detail, None, now)
+                await _add_sweep_log( "kick", handle, sub.id, False, err, False, room_id_val, detail, None, now)
 
             await session.commit()
             await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
@@ -773,7 +791,7 @@ async def maintenance():
                         except Exception:
                             pass
                     await _close_open_sessions(session, sub.id, now)
-                    _add_sweep_log(session, sub.platform or "tiktok", sub.tiktok_username, sub.id, False, None, False, None, "auto-heal stuck LIVE -> offline", None, now)
+                    await _add_sweep_log( sub.platform or "tiktok", sub.tiktok_username, sub.id, False, None, False, None, "auto-heal stuck LIVE -> offline", None, now)
                     logger.info(f"auto-heal stuck LIVE @{sub.tiktok_username} last_live {sub.last_live_at} -> offline")
                 await session.commit()
             except Exception as e:
