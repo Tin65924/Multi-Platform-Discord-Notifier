@@ -352,12 +352,13 @@ async def init_db():
     except Exception as e:
         logger.warning(f"audit prune skipped err={type(e).__name__}")
 
-    # Retention: sweep_logs (Logs page) — keep newest 10k or last 7 days.
-    # 23 creators * ~1920 sweeps/day ≈ 44k rows/day, so 10k ≈ ~5-6h; 7-day
-    # cap is the backstop for quiet instances. Cheap indexed delete.
+    # Retention: sweep_logs (Logs page) — auto-delete after 2 days.
+    # 23 creators * ~1920 sweeps/day ≈ 44k rows/day; 2 days ≈ 88k rows.
+    # Keep 2-day window + 90k cap as safety. Cheap indexed delete. Runs on boot
+    # and every sweep (see poller maintenance) so DB never bloats.
     try:
         from datetime import datetime, timedelta, timezone as _tz
-        _cut = datetime.now(_tz.utc) - timedelta(days=7)
+        _cut = datetime.now(_tz.utc) - timedelta(days=2)
         async with async_session() as session:
             await session.execute(
                 text("DELETE FROM sweep_logs WHERE created_at < :cut"),
@@ -366,7 +367,7 @@ async def init_db():
             await session.execute(
                 text(
                     "DELETE FROM sweep_logs WHERE id NOT IN "
-                    "(SELECT id FROM sweep_logs ORDER BY id DESC LIMIT 10000)"
+                    "(SELECT id FROM sweep_logs ORDER BY id DESC LIMIT 90000)"
                 )
             )
             await session.commit()

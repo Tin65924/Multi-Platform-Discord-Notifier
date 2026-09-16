@@ -4,7 +4,7 @@ import random
 import time
 from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, text
 
 from .config import get_settings
 from .db import async_session, open_session
@@ -807,6 +807,13 @@ async def maintenance():
                 await session.commit()
             except Exception as e:
                 logger.debug(f"stuck heal skipped err={type(e).__name__}")
+            # Retention: sweep_logs 2-day auto-delete (also pruned on boot in db.init_db)
+            try:
+                cut2 = now - timedelta(days=2)
+                await session.execute(text("DELETE FROM sweep_logs WHERE created_at < :cut"), {"cut": cut2})
+                await session.commit()
+            except Exception as e:
+                logger.debug(f"sweep prune skipped err={type(e).__name__}")
             # Periodic fresh-client sweep — breaks a stale reused TikTokLiveClient
             # that can keep reporting live=True hours after the stream ended.
             # Runs every 30m and never touches the DB beyond the evict_missing below.
