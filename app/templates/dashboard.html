@@ -982,6 +982,7 @@ function renderLogs(rows, append=false) {
   else el.innerHTML = html || '<div class="card"><p class="hint" style="margin:0">No sweep logs yet — next poll will fill this. Try clearing filters.</p></div>';
 }
 async function loadLogs() {
+  _setDefaultLogDates();
   LOG_OFFSET = 0;
   const qs = logQuery(0);
   const r = await api('/api/logs?' + qs);
@@ -1007,14 +1008,29 @@ async function loadLogsMore() {
   document.getElementById('logMeta').textContent = `${LAST_LOGS.length} / ${LOG_TOTAL} shown`;
   document.getElementById('logMore').classList.toggle('hidden', LAST_LOGS.length >= LOG_TOTAL);
 }
+function _toLocalDTValue(d) {
+  const pad = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function _setDefaultLogDates() {
+  const from = document.getElementById('logFrom');
+  const to = document.getElementById('logTo');
+  if (from.value && to.value) return;
+  const now = new Date();
+  const start = new Date(now); start.setHours(0,0,0,0);
+  if (!from.value) from.value = _toLocalDTValue(start);
+  if (!to.value) to.value = _toLocalDTValue(now);
+}
 function clearLogFilters() {
-  document.getElementById('logFrom').value = '';
-  document.getElementById('logTo').value = '';
   document.getElementById('logPlatform').value = '__all__';
   document.getElementById('logHandle').value = '';
   document.getElementById('logStatus').value = '__all__';
   document.getElementById('logError').value = '__all__';
   document.getElementById('logQ').value = '';
+  // reset to today per request
+  const now = new Date(); const start = new Date(now); start.setHours(0,0,0,0);
+  document.getElementById('logFrom').value = _toLocalDTValue(start);
+  document.getElementById('logTo').value = _toLocalDTValue(now);
   loadLogs();
 }
 async function copyLogs() {
