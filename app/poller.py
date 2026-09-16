@@ -10,7 +10,7 @@ from .config import get_settings
 from .db import async_session, open_session
 from .models import Subscription, GlobalSettings, LiveSession
 from .security import log_audit
-from .tiktok import checker
+from .tiktok import checker, fetch_tiktok_profile
 from .webhook import build_embed, display_account, effective_image, resolve_webhook_cfg, send_webhook
 from .kick import checker as kick_checker
 from .youtube import checker as youtube_checker
@@ -241,6 +241,15 @@ async def poll_once():
                         await session.commit()
                         await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                         continue
+
+                # Fresh avatar for live notification + creator card (replaces 3-day refresh).
+                try:
+                    prof = await fetch_tiktok_profile(username)
+                    if prof and prof.get("avatar_url"):
+                        sub.avatar_url = prof["avatar_url"]
+                        sub.avatar_checked_at = now
+                except Exception:
+                    pass
 
                 payload = build_embed(
                     username,
@@ -603,8 +612,8 @@ _avatar_next_due: float = 0.0
 
 
 async def _maintenance_avatars(session, now):
-    """Refresh auto avatars (+ id anchors): one stalest creator per ~4.8h
-    window. Same 5/day volume, never bursty — profile fetches are flag fuel."""
+    """Deprecated no-op: avatars now refresh on-notify (see poll_once). Kept for compat."""
+    return
     from .tiktok import fetch_tiktok_profile
 
     global _avatar_next_due
@@ -650,7 +659,8 @@ async def maintenance():
         now = datetime.now(timezone.utc)
         async with async_session() as session:
             await _maintenance_renames(session, now)
-            await _maintenance_avatars(session, now)
+            # _maintenance_avatars removed: avatars now refresh on-notify
+            # (fresh avatar fetched right before each notification and saved to card)
             # Drop checker clients for removed creators; cap attempt memory.
             try:
                 from .tiktok import checker as _tt
