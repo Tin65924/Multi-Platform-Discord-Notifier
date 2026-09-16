@@ -316,6 +316,27 @@ async def init_db():
     except Exception as e:
         logger.warning(f"audit prune skipped err={type(e).__name__}")
 
+    # Retention: sweep_logs (Logs page) — keep newest 10k or last 7 days.
+    # 23 creators * ~1920 sweeps/day ≈ 44k rows/day, so 10k ≈ ~5-6h; 7-day
+    # cap is the backstop for quiet instances. Cheap indexed delete.
+    try:
+        from datetime import datetime, timedelta, timezone as _tz
+        _cut = datetime.now(_tz.utc) - timedelta(days=7)
+        async with async_session() as session:
+            await session.execute(
+                text("DELETE FROM sweep_logs WHERE created_at < :cut"),
+                {"cut": _cut},
+            )
+            await session.execute(
+                text(
+                    "DELETE FROM sweep_logs WHERE id NOT IN "
+                    "(SELECT id FROM sweep_logs ORDER BY id DESC LIMIT 10000)"
+                )
+            )
+            await session.commit()
+    except Exception as e:
+        logger.warning(f"sweep_logs prune skipped err={type(e).__name__}")
+
     # Retention: closed live sessions older than 180 days go; open rows
     # (currently live) are kept regardless of age.
     try:

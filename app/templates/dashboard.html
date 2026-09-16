@@ -158,19 +158,21 @@
     </div>
   </section>
 
-  <!-- Logs (admin + superadmin) -->
+  <!-- Logs (admin + superadmin): sweep trace -->
   <section id="tab-logs" class="hidden" style="margin-top:1.5rem">
     <div class="card">
-      <h2>Logs</h2>
-      <p class="hint">Filterable audit trail for reporting — admins and superadmins. <b>Copy</b> copies exactly what you see (filtered or all).</p>
-      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:10px">
+      <h2>Sweep Logs</h2>
+      <p class="hint">Per-creator check trace — which creator was checked, when, what happened, was it notified. Admins + superadmins. <b>Copy</b> copies exactly what you see (filtered or all).</p>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px">
         <div><label class="mini">From</label><input id="logFrom" type="datetime-local"></div>
         <div><label class="mini">To</label><input id="logTo" type="datetime-local"></div>
-        <div><label class="mini">Actor</label><input id="logActor" placeholder="any actor" list="logActorList"><datalist id="logActorList"></datalist></div>
-        <div><label class="mini">Action</label><select id="logAction"><option value="__all__">All actions</option></select></div>
+        <div><label class="mini">Platform</label><select id="logPlatform"><option value="__all__">All platforms</option><option value="tiktok">TikTok</option><option value="youtube">YouTube</option><option value="kick">Kick</option><option value="twitch">Twitch</option></select></div>
+        <div><label class="mini">Creator handle</label><input id="logHandle" placeholder="any handle" list="logHandleList"><datalist id="logHandleList"></datalist></div>
       </div>
-      <div style="display:grid; grid-template-columns:1fr 110px; gap:10px; margin-top:10px">
-        <div><label class="mini">Search (actor / action / detail)</label><input id="logQ" placeholder="e.g. creator.add, @handle, webhook"></div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin-top:10px">
+        <div><label class="mini">Status</label><select id="logStatus"><option value="__all__">All</option><option value="live">LIVE</option><option value="offline">offline</option><option value="error">error</option><option value="notified">notified</option></select></div>
+        <div><label class="mini">Error</label><select id="logError"><option value="__all__">All errors</option><option value="__none__">no error</option></select></div>
+        <div><label class="mini">Search (handle / detail / room)</label><input id="logQ" placeholder="e.g. @handle, not_found, dedup"></div>
         <div><label class="mini">Limit</label><select id="logLimit"><option value="100">100</option><option value="200" selected>200</option><option value="500">500</option></select></div>
       </div>
       <div style="display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; align-items:center">
@@ -882,14 +884,14 @@ async function loadLogMeta() {
     const r = await api('/api/logs/meta');
     if (!r.ok) return;
     const m = await r.json();
-    const actSel = document.getElementById('logAction');
-    (m.actions || []).forEach(a => {
-      const o = document.createElement('option');
-      o.value = a; o.textContent = a;
-      actSel.appendChild(o);
+    const hdl = document.getElementById('logHandleList');
+    if (hdl) hdl.innerHTML = (m.handles || []).map(h => `<option value="${escapeHtml(h)}">`).join('');
+    const errSel = document.getElementById('logError');
+    // keep All / none, then append distinct errors
+    (m.errors || []).forEach(e => {
+      if ([...errSel.options].some(o => o.value === e)) return;
+      const o = document.createElement('option'); o.value = e; o.textContent = e; errSel.appendChild(o);
     });
-    const dl = document.getElementById('logActorList');
-    dl.innerHTML = (m.actors || []).map(a => `<option value="${escapeHtml(a)}">`).join('');
     LOG_META_LOADED = true;
   } catch {}
 }
@@ -897,39 +899,57 @@ function logQuery(offset=0) {
   const p = new URLSearchParams();
   const f = document.getElementById('logFrom').value;
   const t = document.getElementById('logTo').value;
-  const actor = document.getElementById('logActor').value.trim();
-  const action = document.getElementById('logAction').value;
+  const plat = document.getElementById('logPlatform').value;
+  const handle = document.getElementById('logHandle').value.trim();
+  const status = document.getElementById('logStatus').value;
+  const err = document.getElementById('logError').value;
   const q = document.getElementById('logQ').value.trim();
   const lim = document.getElementById('logLimit').value;
   if (f) p.set('frm', new Date(f).toISOString());
   if (t) p.set('to', new Date(t).toISOString());
-  if (actor) p.set('actor', actor);
-  if (action && action !== '__all__') p.set('action', action);
+  if (plat && plat !== '__all__') p.set('platform', plat);
+  if (handle) p.set('handle', handle);
+  if (status && status !== '__all__') p.set('status', status);
+  if (err && err !== '__all__') p.set('error', err);
   if (q) p.set('q', q);
   p.set('limit', lim || '200');
   p.set('offset', String(offset));
   return p.toString();
 }
-function fmtLogLine(a) {
-  // ISO -> local-ish for clipboard: 2026-03-15 14:03:22 | actor | action | detail
-  let t = a.created_at || '';
+function fmtLogLine(r) {
+  let t = r.created_at || '';
   try {
     const d = new Date(t.endsWith('Z') || t.includes('+') ? t : t + 'Z');
     if (!isNaN(d)) t = d.toISOString().replace('T',' ').slice(0,19);
   } catch {}
-  return `${t} | ${a.actor || ''} | ${a.action || ''} | ${a.detail || ''}`;
+  const plat = r.platform || '';
+  const h = r.handle ? '@' + r.handle : '';
+  const live = r.is_live === true ? 'LIVE' : r.is_live === false ? 'offline' : '—';
+  const notif = r.notified ? 'notified' : '—';
+  const err = r.error || '—';
+  const det = r.detail || '—';
+  const room = r.room_id || '—';
+  const dur = r.duration_ms != null ? r.duration_ms + 'ms' : '—';
+  return `${t} | ${plat} ${h} | ${live} | ${notif} | ${err} | ${det} | ${room} | ${dur}`;
+}
+function sweepPill(r) {
+  if (r.notified) return '<span class="pill pill-live">notified</span>';
+  if (r.is_live) return '<span class="pill pill-st-active">LIVE</span>';
+  if (r.error) return `<span class="pill pill-st-terminate">${escapeHtml(r.error)}</span>`;
+  if (r.is_live === false) return '<span class="pill pill-off">offline</span>';
+  return '<span class="pill pill-off">—</span>';
 }
 function renderLogs(rows, append=false) {
   const el = document.getElementById('logList');
-  const html = rows.map(a => `
+  const html = rows.map(r => `
     <div class="auditrow">
-      <span class="t">${fmtTime(a.created_at)}</span>
-      <span class="a">${escapeHtml(a.actor)}</span>
-      <span class="c">${escapeHtml(a.action)}</span>
-      <span class="d">${escapeHtml(a.detail||'')}</span>
+      <span class="t">${fmtTime(r.created_at)}</span>
+      <span class="a">${escapeHtml(r.platform)} ${escapeHtml(r.handle ? '@'+r.handle : '')}</span>
+      <span class="c">${sweepPill(r)}</span>
+      <span class="d" title="${escapeHtml(r.detail||'')} — ${escapeHtml(r.room_id||'')} ${r.duration_ms!=null?r.duration_ms+'ms':''}">${escapeHtml(r.detail||'')} ${r.error?`(${escapeHtml(r.error)})`:''} ${r.duration_ms!=null?`<span class="mini">${r.duration_ms}ms</span>`:''}</span>
     </div>`).join('');
   if (append) el.innerHTML += html;
-  else el.innerHTML = html || '<div class="card"><p class="hint" style="margin:0">No logs match those filters.</p></div>';
+  else el.innerHTML = html || '<div class="card"><p class="hint" style="margin:0">No sweep logs yet — next poll will fill this. Try clearing filters.</p></div>';
 }
 async function loadLogs() {
   LOG_OFFSET = 0;
@@ -960,8 +980,10 @@ async function loadLogsMore() {
 function clearLogFilters() {
   document.getElementById('logFrom').value = '';
   document.getElementById('logTo').value = '';
-  document.getElementById('logActor').value = '';
-  document.getElementById('logAction').value = '__all__';
+  document.getElementById('logPlatform').value = '__all__';
+  document.getElementById('logHandle').value = '';
+  document.getElementById('logStatus').value = '__all__';
+  document.getElementById('logError').value = '__all__';
   document.getElementById('logQ').value = '';
   loadLogs();
 }
@@ -972,7 +994,6 @@ async function copyLogs() {
     await navigator.clipboard.writeText(text);
     toast(`Copied ${LAST_LOGS.length} log line(s)`, 'ok');
   } catch {
-    // Fallback: hidden textarea
     const ta = document.createElement('textarea');
     ta.value = text; ta.style.position='fixed'; ta.style.opacity='0';
     document.body.appendChild(ta); ta.select();
@@ -980,9 +1001,9 @@ async function copyLogs() {
     ta.remove();
   }
 }
-// Enter in search triggers filter
+// Enter in search/handle triggers filter
 document.getElementById('logQ')?.addEventListener('keydown', e => { if (e.key === 'Enter') loadLogs(); });
-document.getElementById('logActor')?.addEventListener('keydown', e => { if (e.key === 'Enter') loadLogs(); });
+document.getElementById('logHandle')?.addEventListener('keydown', e => { if (e.key === 'Enter') loadLogs(); });
 boot();
 </script>
 {% endblock %}
