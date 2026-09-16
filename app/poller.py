@@ -176,7 +176,7 @@ async def poll_once():
                 or_(Subscription.platform == "tiktok", Subscription.platform.is_(None)),
             )
         )
-        rows = [(s.id, s.tiktok_username) for s in result.scalars().all()]
+        rows = [(s.id, s.tiktok_username, s.last_live_at) for s in result.scalars().all()]
         notify_on = await notifications_enabled(session)
     if not rows:
         return {"checked": 0, "notified": 0}
@@ -187,8 +187,16 @@ async def poll_once():
         logger.warning("poll skipped: no webhook configured in DB or env")
         return {"checked": 0, "notified": 0, "error": "no webhook"}
 
-    usernames = list({u for _, u in rows})
-    random.shuffle(usernames)
+    # Build lookup: username -> last_live_at (None if never live)
+    live_map = {u: ld for _, u, ld in rows}
+
+    # Sort so creators who went live most recently are checked first.
+    # None values sort last, so never‑live creators end up at the bottom.
+    usernames = sorted(
+        [u for _, u, _ in rows],
+        key=lambda u: live_map.get(u) or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
 
     by_id = {u: sid for sid, u in rows}
     checked = 0
