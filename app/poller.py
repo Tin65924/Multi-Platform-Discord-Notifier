@@ -307,7 +307,9 @@ async def poll_once():
 
             if live_info.is_live:
                 room_id = live_info.room_id or f"live-{username}"
-                if _last_room_cache.get("tt:" + username) == room_id:
+                # Fallback room (fetch failed) never dedups — avoids missing a new live
+                # that reuses the same "live-{handle}" string after an offline gap.
+                if room_id != f"live-{username}" and _last_room_cache.get("tt:" + username) == room_id:
                     sub.is_live = True
                     await _open_session(session, sub, room_id, now)
                     await _add_sweep_log( "tiktok", username, sub.id, True, None, False, room_id, "dedup skip — same room", duration_ms, now)
@@ -449,7 +451,7 @@ async def poll_youtube():
 
             if live_info.is_live:
                 room_id = live_info.room_id or f"live-yt-{handle}"
-                if _last_room_cache.get("yt:" + handle) == room_id:
+                if room_id != f"live-yt-{handle}" and _last_room_cache.get("yt:" + handle) == room_id:
                     sub.is_live = True
                     await _open_session(session, sub, room_id, now)
                     await _add_sweep_log( "youtube", handle, sub.id, True, None, False, room_id, "dedup skip — same room", duration_ms, now)
@@ -585,7 +587,7 @@ async def poll_kick():
 
             if live_info.is_live:
                 room_id = live_info.room_id or f"live-kk-{handle}"
-                if _last_room_cache.get("kk:" + handle) == room_id:
+                if room_id != f"live-kk-{handle}" and _last_room_cache.get("kk:" + handle) == room_id:
                     sub.is_live = True
                     await _open_session(session, sub, room_id, now)
                     await _add_sweep_log( "kick", handle, sub.id, True, None, False, room_id, "dedup skip — same room", None, now)

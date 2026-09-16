@@ -269,6 +269,42 @@ async def init_db():
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Ensure sweep_logs exists on old DBs where create_all may have been missed
+        try:
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS sweep_logs (
+                    id SERIAL PRIMARY KEY,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    platform VARCHAR(16) DEFAULT 'tiktok',
+                    handle VARCHAR(64) NOT NULL,
+                    subscription_id INTEGER,
+                    is_live BOOLEAN,
+                    error VARCHAR(64),
+                    notified BOOLEAN DEFAULT FALSE,
+                    room_id VARCHAR(64),
+                    duration_ms INTEGER,
+                    detail TEXT
+                )
+            """))
+        except Exception:
+            try:
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS sweep_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        platform VARCHAR(16) DEFAULT 'tiktok',
+                        handle VARCHAR(64) NOT NULL,
+                        subscription_id INTEGER,
+                        is_live BOOLEAN,
+                        error VARCHAR(64),
+                        notified BOOLEAN DEFAULT 0,
+                        room_id VARCHAR(64),
+                        duration_ms INTEGER,
+                        detail TEXT
+                    )
+                """))
+            except Exception as e:
+                logger.warning(f"sweep_logs create skipped err={type(e).__name__}")
         if engine.dialect.name == "postgresql":
             for stmt in postgres_migration_statements():
                 try:
