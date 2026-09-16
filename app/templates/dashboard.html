@@ -8,6 +8,7 @@
 <button data-tab="audit" id="tabAudit" onclick="showTab('audit')" class="pt-nav__link hidden">Audit</button>
 <button data-tab="send" id="tabSend" onclick="showTab('send')" class="pt-nav__link hidden">Send</button>
 <button data-tab="analytics" onclick="showTab('analytics')" class="pt-nav__link">Analytics</button>
+<button data-tab="logs" onclick="showTab('logs')" class="pt-nav__link">Logs</button>
 {% endblock %}
 
 {% block userbox %}<span id="whoami"></span><button onclick="logout()" class="btn btn-ghost btn-xs">Logout</button>{% endblock %}
@@ -157,6 +158,34 @@
     </div>
   </section>
 
+  <!-- Logs (admin + superadmin) -->
+  <section id="tab-logs" class="hidden" style="margin-top:1.5rem">
+    <div class="card">
+      <h2>Logs</h2>
+      <p class="hint">Filterable audit trail for reporting — admins and superadmins. <b>Copy</b> copies exactly what you see (filtered or all).</p>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:10px">
+        <div><label class="mini">From</label><input id="logFrom" type="datetime-local"></div>
+        <div><label class="mini">To</label><input id="logTo" type="datetime-local"></div>
+        <div><label class="mini">Actor</label><input id="logActor" placeholder="any actor" list="logActorList"><datalist id="logActorList"></datalist></div>
+        <div><label class="mini">Action</label><select id="logAction"><option value="__all__">All actions</option></select></div>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 110px; gap:10px; margin-top:10px">
+        <div><label class="mini">Search (actor / action / detail)</label><input id="logQ" placeholder="e.g. creator.add, @handle, webhook"></div>
+        <div><label class="mini">Limit</label><select id="logLimit"><option value="100">100</option><option value="200" selected>200</option><option value="500">500</option></select></div>
+      </div>
+      <div style="display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; align-items:center">
+        <button onclick="loadLogs()" class="btn btn-gold btn-xs">Apply filters</button>
+        <button onclick="clearLogFilters()" class="btn btn-ghost btn-xs">Clear</button>
+        <button onclick="copyLogs()" class="btn btn-ghost btn-xs" title="Copies the currently displayed logs">Copy filtered logs</button>
+        <span id="logMeta" class="msg" style="margin:0"></span>
+      </div>
+    </div>
+    <div id="logList" style="display:grid; gap:6px"></div>
+    <div style="display:flex; gap:8px; margin-top:10px">
+      <button id="logMore" onclick="loadLogsMore()" class="btn btn-ghost btn-xs hidden">Load more</button>
+    </div>
+  </section>
+
   <!-- Send test message (superadmin only) -->
   <section id="tab-send" class="hidden" style="margin-top:1.5rem">
     <div class="card">
@@ -207,14 +236,16 @@ async function api(path, opts={}, _retried=false) {
   return r;
 }
 function showTab(name) {
-  ['creators','webhook','admins','audit','send','analytics'].forEach(t => {
-    document.getElementById('tab-'+t).classList.toggle('hidden', t !== name);
+  ['creators','webhook','admins','audit','send','analytics','logs'].forEach(t => {
+    const sec = document.getElementById('tab-'+t);
+    if (sec) sec.classList.toggle('hidden', t !== name);
     const btn = document.querySelector(`[data-tab="${t}"]`);
     if (btn) btn.classList.toggle('active', t === name);
   });
   if (name === 'audit') loadAudit();
   if (name === 'admins') loadAdmins();
   if (name === 'analytics') loadAnalytics();
+  if (name === 'logs') { loadLogMeta(); loadLogs(); }
 }
 async function boot() {
   const r = await api('/api/me');
@@ -834,11 +865,124 @@ async function loadAudit() {
   document.getElementById('auditList').innerHTML = data.length ? data.map(a => `
     <div class="auditrow">
       <span class="t">${fmtTime(a.created_at)}</span>
-      <span class="a">${a.actor}</span>
-      <span class="c">${a.action}</span>
-      <span class="d">${a.detail||''}</span>
+      <span class="a">${escapeHtml(a.actor)}</span>
+      <span class="c">${escapeHtml(a.action)}</span>
+      <span class="d">${escapeHtml(a.detail||'')}</span>
     </div>`).join('') : '<div class="card"><p class="hint" style="margin:0">No audit entries yet.</p></div>';
 }
+
+// --- logs (admin + superadmin): filterable audit for reporting ---
+let LAST_LOGS = [];
+let LOG_OFFSET = 0;
+let LOG_TOTAL = 0;
+let LOG_META_LOADED = false;
+async function loadLogMeta() {
+  if (LOG_META_LOADED) return;
+  try {
+    const r = await api('/api/logs/meta');
+    if (!r.ok) return;
+    const m = await r.json();
+    const actSel = document.getElementById('logAction');
+    (m.actions || []).forEach(a => {
+      const o = document.createElement('option');
+      o.value = a; o.textContent = a;
+      actSel.appendChild(o);
+    });
+    const dl = document.getElementById('logActorList');
+    dl.innerHTML = (m.actors || []).map(a => `<option value="${escapeHtml(a)}">`).join('');
+    LOG_META_LOADED = true;
+  } catch {}
+}
+function logQuery(offset=0) {
+  const p = new URLSearchParams();
+  const f = document.getElementById('logFrom').value;
+  const t = document.getElementById('logTo').value;
+  const actor = document.getElementById('logActor').value.trim();
+  const action = document.getElementById('logAction').value;
+  const q = document.getElementById('logQ').value.trim();
+  const lim = document.getElementById('logLimit').value;
+  if (f) p.set('frm', new Date(f).toISOString());
+  if (t) p.set('to', new Date(t).toISOString());
+  if (actor) p.set('actor', actor);
+  if (action && action !== '__all__') p.set('action', action);
+  if (q) p.set('q', q);
+  p.set('limit', lim || '200');
+  p.set('offset', String(offset));
+  return p.toString();
+}
+function fmtLogLine(a) {
+  // ISO -> local-ish for clipboard: 2026-03-15 14:03:22 | actor | action | detail
+  let t = a.created_at || '';
+  try {
+    const d = new Date(t.endsWith('Z') || t.includes('+') ? t : t + 'Z');
+    if (!isNaN(d)) t = d.toISOString().replace('T',' ').slice(0,19);
+  } catch {}
+  return `${t} | ${a.actor || ''} | ${a.action || ''} | ${a.detail || ''}`;
+}
+function renderLogs(rows, append=false) {
+  const el = document.getElementById('logList');
+  const html = rows.map(a => `
+    <div class="auditrow">
+      <span class="t">${fmtTime(a.created_at)}</span>
+      <span class="a">${escapeHtml(a.actor)}</span>
+      <span class="c">${escapeHtml(a.action)}</span>
+      <span class="d">${escapeHtml(a.detail||'')}</span>
+    </div>`).join('');
+  if (append) el.innerHTML += html;
+  else el.innerHTML = html || '<div class="card"><p class="hint" style="margin:0">No logs match those filters.</p></div>';
+}
+async function loadLogs() {
+  LOG_OFFSET = 0;
+  const qs = logQuery(0);
+  const r = await api('/api/logs?' + qs);
+  if (!r.ok) { toast(await r.text(), 'err'); return; }
+  const d = await r.json();
+  LAST_LOGS = d.rows || [];
+  LOG_TOTAL = d.total || 0;
+  renderLogs(LAST_LOGS, false);
+  document.getElementById('logMeta').textContent = `${LAST_LOGS.length} / ${LOG_TOTAL} shown`;
+  document.getElementById('logMore').classList.toggle('hidden', LAST_LOGS.length >= LOG_TOTAL);
+}
+async function loadLogsMore() {
+  const next = LAST_LOGS.length;
+  if (next >= LOG_TOTAL) return;
+  const qs = logQuery(next);
+  const r = await api('/api/logs?' + qs);
+  if (!r.ok) { toast(await r.text(), 'err'); return; }
+  const d = await r.json();
+  const more = d.rows || [];
+  LAST_LOGS = LAST_LOGS.concat(more);
+  LOG_TOTAL = d.total || LOG_TOTAL;
+  renderLogs(more, true);
+  document.getElementById('logMeta').textContent = `${LAST_LOGS.length} / ${LOG_TOTAL} shown`;
+  document.getElementById('logMore').classList.toggle('hidden', LAST_LOGS.length >= LOG_TOTAL);
+}
+function clearLogFilters() {
+  document.getElementById('logFrom').value = '';
+  document.getElementById('logTo').value = '';
+  document.getElementById('logActor').value = '';
+  document.getElementById('logAction').value = '__all__';
+  document.getElementById('logQ').value = '';
+  loadLogs();
+}
+async function copyLogs() {
+  if (!LAST_LOGS.length) { toast('No logs to copy', 'err'); return; }
+  const text = LAST_LOGS.map(fmtLogLine).join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(`Copied ${LAST_LOGS.length} log line(s)`, 'ok');
+  } catch {
+    // Fallback: hidden textarea
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); toast(`Copied ${LAST_LOGS.length} log line(s)`, 'ok'); } catch { toast('Copy failed — select and copy manually', 'err'); }
+    ta.remove();
+  }
+}
+// Enter in search triggers filter
+document.getElementById('logQ')?.addEventListener('keydown', e => { if (e.key === 'Enter') loadLogs(); });
+document.getElementById('logActor')?.addEventListener('keydown', e => { if (e.key === 'Enter') loadLogs(); });
 boot();
 </script>
 {% endblock %}

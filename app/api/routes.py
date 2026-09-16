@@ -166,6 +166,92 @@ async def list_audit(limit: int = 100, session: AsyncSession = Depends(get_sessi
     ]
 
 
+# --- Logs (admin + superadmin): filterable audit for reporting ---
+@router.get("/logs")
+async def list_logs(
+    frm: str | None = None, to: str | None = None,
+    actor: str | None = None, action: str | None = None,
+    q: str | None = None,
+    limit: int = 200, offset: int = 0,
+    session: AsyncSession = Depends(get_session), user=Depends(require_admin),
+):
+    """Filterable audit log: date range + actor/action/search + pagination.
+
+    Query params: ?from=ISO&to=ISO&actor=name&action=action&q=free-text&limit=200&offset=0
+    `from`/`to` are ISO datetimes; bounds are inclusive. All filters are optional.
+    Available to admins and superadmins so teams can report what happened.
+    """
+    from sqlalchemy import or_
+
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+
+    # Base query with filters
+    conds = []
+    # Date filters: parse ISO, tolerate date-only strings
+    def _parse_dt(s: str | None):
+        if not s:
+            return None
+        s = s.strip()
+        if not s:
+            return None
+        # datetime-local sends "YYYY-MM-DDTHH:MM" without tz
+        try:
+            # normalize: replace Z, handle space
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except Exception:
+            return None
+
+    f_dt = _parse_dt(frm)
+    t_dt = _parse_dt(to)
+    if f_dt is not None:
+        conds.append(AuditLog.created_at >= f_dt)
+    if t_dt is not None:
+        conds.append(AuditLog.created_at <= t_dt)
+    if actor and actor.strip():
+        conds.append(AuditLog.actor.ilike(f"%{actor.strip()}%"))
+    if action and action.strip() and action.strip() != "__all__":
+        conds.append(AuditLog.action == action.strip())
+    if q and q.strip():
+        qq = f"%{q.strip()}%"
+        conds.append(or_(AuditLog.detail.ilike(qq), AuditLog.actor.ilike(qq), AuditLog.action.ilike(qq)))
+
+    base = select(AuditLog)
+    if conds:
+        base = base.where(*conds)
+
+    # Total matching (for pagination hint) — cheap count query
+    total = await session.scalar(select(func.count()).select_from(base.subquery())) or 0
+
+    result = await session.execute(base.order_by(AuditLog.id.desc()).limit(limit).offset(offset))
+    rows = result.scalars().all()
+
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "rows": [
+            {"id": a.id, "actor": a.actor, "action": a.action, "detail": a.detail,
+             "created_at": a.created_at.isoformat() if a.created_at else None}
+            for a in rows
+        ],
+    }
+
+
+@router.get("/logs/meta")
+async def logs_meta(session: AsyncSession = Depends(get_session), user=Depends(require_admin)):
+    """Distinct actors and actions for populating log filters."""
+    actors_q = await session.execute(select(AuditLog.actor).distinct().order_by(AuditLog.actor).limit(100))
+    actions_q = await session.execute(select(AuditLog.action).distinct().order_by(AuditLog.action).limit(100))
+    return {
+        "actors": [r[0] for r in actors_q.all() if r[0]],
+        "actions": [r[0] for r in actions_q.all() if r[0]],
+    }
+
+
 # --- Settings: global defaults (admin + superadmin) ---
 @router.get("/settings")
 async def get_settings_api(session: AsyncSession = Depends(get_session), user=Depends(require_admin)):
