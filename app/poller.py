@@ -244,7 +244,7 @@ async def poll_once():
     # Sort so creators who went live most recently are checked first.
     # None values sort last, so never‑live creators end up at the bottom.
     usernames = sorted(
-        [u for _, u, _ in rows],
+        [u for _, u, _, _ in rows],
         key=lambda u: live_map.get(u) or datetime.min.replace(tzinfo=timezone.utc),
         reverse=True,
     )
@@ -252,7 +252,7 @@ async def poll_once():
     global _last_sweep_order
     _last_sweep_order = list(usernames)
 
-    by_id = {u: sid for sid, _, _, _ in rows}
+    by_id = {u: sid for sid, u, _, _ in rows}
     checked = 0
     notified = 0
 
