@@ -423,6 +423,7 @@ async def poll_youtube():
     notified = 0
 
     for handle in handles:
+        checked += 1
         t0 = time.monotonic()
         live_info = await youtube_checker.is_live(handle, api_key=api_key)
         duration_ms = int((time.monotonic() - t0) * 1000)

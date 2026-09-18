@@ -625,8 +625,7 @@ async def mark_offline(sub_id: int, session: AsyncSession = Depends(get_session)
         if (sub.platform or "tiktok") == "tiktok":
             try:
                 from ..tiktok import checker
-                checker._clients.pop(sub.tiktok_username, None)
-                checker._locks.pop(sub.tiktok_username, None)
+                checker.drop(sub.tiktok_username)  # pop + close httpx (bare pop leaks)
             except Exception:
                 pass
         await _close_open_sessions(session, sub.id, datetime.now(timezone.utc))
