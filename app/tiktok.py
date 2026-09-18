@@ -153,12 +153,37 @@ class TikTokChecker:
         return client, lock, created
 
     def evict_missing(self, alive: set[str]) -> int:
-        """Drop cached clients/locks for removed creators (slow anti-accretion)."""
+        """Drop cached clients/locks for removed creators (slow anti-accretion).
+
+        Close is scheduled in the background: popping without close() leaks
+        the client's httpx pool/SSL per sweep (~18MB/sweep at 24 creators —
+        the 04:53→05:17 climb to 467MB). Hot paths (offline/not_found) must
+        NOT evict at all — reuse the warm client instead.
+        """
         dead = [u for u in self._clients if u not in alive]
         for u in dead:
-            self._clients.pop(u, None)
-            self._locks.pop(u, None)
+            self.drop(u)
         return len(dead)
+
+    def drop(self, clean: str) -> None:
+        """Pop a cached client and close its httpx/WS sessions in background."""
+        client = self._clients.pop(clean, None)
+        self._locks.pop(clean, None)
+        if client is None:
+            return
+
+        async def _close():
+            try:
+                await client.close()
+            except Exception:
+                pass
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_close())
+        except RuntimeError:
+            # No running loop (e.g. tests) — best effort, GC handles the rest.
+            pass
 
     async def is_live(self, username: str) -> LiveInfo:
         clean = username.strip().lstrip("@").lower()

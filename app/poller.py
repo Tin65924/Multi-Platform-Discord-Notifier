@@ -24,7 +24,6 @@ _next_sweep_at: datetime | None = None
 _last_sweep_at: datetime | None = None
 _sweep_in_progress: bool = False
 _last_sweep_order: list[str] = []  # usernames in last sort order (for per-creator ETA)
-_last_client_evict: float = 0.0
 
 
 def get_schedule_state() -> dict:
@@ -68,13 +67,17 @@ def rss_current_mb() -> float | None:
 _last_rss: float | None = None
 
 
-def should_recycle(peak: float | None) -> bool:
+def should_recycle(peak: float | None, cur: float | None = None) -> bool:
     """Recycle only while still climbing past the ceiling.
 
     A stable-high peak (equilibrium) is left alone — restarting it would
     loop forever. Strictly-greater means still growing toward the OOM line.
+    `cur` (/proc current) runs ~20MB above peak on Render and is the real
+    OOM line — recycle early on it even if peak hasn't caught up yet.
     """
     global _last_rss
+    if cur is not None and cur > 460:
+        return True
     if peak is None:
         return False
     climbing = _last_rss is not None and peak > _last_rss
@@ -261,14 +264,14 @@ async def poll_once():
         # Heal stuck clients: if card has been LIVE for >3h, force fresh client.
         # This breaks a stale reused TikTokLiveClient that keeps reporting live
         # after the stream ended (user saw card stuck LIVE hours after 9:30).
+        # Rare path (only stuck cards) — drop() closes httpx properly.
         try:
             if is_live_map.get(username) and live_map.get(username):
                 ll = live_map[username]
                 if ll and ll.tzinfo is None:
                     ll = ll.replace(tzinfo=timezone.utc)
                 if ll and (datetime.now(timezone.utc) - ll).total_seconds() > 3 * 3600:
-                    checker._clients.pop(username, None)
-                    checker._locks.pop(username, None)
+                    checker.drop(username)
         except Exception:
             pass
         t0 = time.monotonic()
@@ -288,9 +291,10 @@ async def poll_once():
                     logger.info(f"handle not resolving @{sub.tiktok_username} — tracking for rename")
                 sub.is_live = False
                 _last_room_cache.pop("tt:" + username, None)
-                # force fresh client next sweep — breaks stale live cache
-                checker._clients.pop(username, None)
-                checker._locks.pop(username, None)
+                # NOTE: keep the cached client (no evict). Popping here without
+                # close() leaked ~0.75MB/check — at 24 creators that was the
+                # ~18MB/sweep climb to the 467MB recycle. Reuse is safe:
+                # not_found comes from the check itself, not cached state.
                 await _close_open_sessions(session, sub.id, now)
                 await _add_sweep_log( "tiktok", username, sub.id, False, "not_found", False, room_id_val, "not_found — tracking rename", duration_ms, now)
                 await session.commit()
@@ -373,8 +377,10 @@ async def poll_once():
             else:
                 sub.is_live = False
                 _last_room_cache.pop("tt:" + username, None)
-                checker._clients.pop(username, None)
-                checker._locks.pop(username, None)
+                # NOTE: keep the cached client — offline is the hot path (24/25
+                # creators most sweeps). Evict+recreate every sweep churned
+                # httpx pools/SSL without close() and ratcheted RSS ~18MB/sweep
+                # to the 512MB ceiling. Warm reuse is faster too (no TLS redo).
                 await _close_open_sessions(session, sub.id, now)
                 detail = "offline" if err is None else f"error:{err}"
                 await _add_sweep_log( "tiktok", username, sub.id, False, err, False, room_id_val, detail, duration_ms, now)
@@ -797,8 +803,7 @@ async def maintenance():
                     if (sub.platform or "tiktok") == "tiktok":
                         try:
                             from .tiktok import checker as _tt2
-                            _tt2._clients.pop(sub.tiktok_username, None)
-                            _tt2._locks.pop(sub.tiktok_username, None)
+                            _tt2.drop(sub.tiktok_username)
                         except Exception:
                             pass
                     await _close_open_sessions(session, sub.id, now)
@@ -814,21 +819,10 @@ async def maintenance():
                 await session.commit()
             except Exception as e:
                 logger.debug(f"sweep prune skipped err={type(e).__name__}")
-            # Periodic fresh-client sweep — breaks a stale reused TikTokLiveClient
-            # that can keep reporting live=True hours after the stream ended.
-            # Runs every 30m and never touches the DB beyond the evict_missing below.
-            try:
-                global _last_client_evict
-                if time.time() - _last_client_evict > 1800:
-                    from .tiktok import checker as _ttc
-                    n = len(_ttc._clients)
-                    if n:
-                        _ttc._clients.clear()
-                        _ttc._locks.clear()
-                        logger.info(f"tiktok clients periodic refresh ({n} evicted)")
-                    _last_client_evict = time.time()
-            except Exception:
-                pass
+            # Stale-live guard is now the targeted >3h heal above (per-card, rare).
+            # The old 30m blind clear wiped all warm clients without close() and
+            # re-created them next sweep — a 20MB spike each time on top of the
+            # per-sweep churn. Removed: warm reuse is the steady state.
             # _maintenance_avatars removed: avatars now refresh on-notify
             # (fresh avatar fetched right before each notification and saved to card)
             # Drop checker clients for removed creators; cap attempt memory.
@@ -867,13 +861,14 @@ async def poll_loop():
             result, yt, kk = await poll_cycle()
             await maintenance()  # rename attempts + avatar refreshes (bounded, best-effort)
             peak = rss_mb()
+            cur = rss_current_mb()
             logger.info(
                 f"poll sweep checked={result['checked']}+{yt['checked']}+{kk['checked']} "
                 f"notified={result['notified']}+{yt['notified']}+{kk['notified']} "
-                f"rss={peak}MB cur={rss_current_mb()}MB"
+                f"rss={peak}MB cur={cur}MB"
             )
-            if should_recycle(peak):
-                logger.warning(f"memory ceiling hit (peak {peak}MB) — recycling process")
+            if should_recycle(peak, cur):
+                logger.warning(f"memory ceiling hit (peak {peak}MB cur {cur}MB) — recycling process")
                 import os as _os
 
                 _os._exit(0)
