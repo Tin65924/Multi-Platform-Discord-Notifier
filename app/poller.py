@@ -209,6 +209,46 @@ async def _add_sweep_log(platform: str, handle: str, sub_id: int | None,
             logger.debug(f'sweep_log failed {type(e).__name__}')
 
 
+def _sweep_row(platform, handle, sub_id, is_live, error, notified,
+               room_id, detail, duration_ms, now) -> SweepLog:
+    """Build a detached SweepLog row (added to a session by the caller)."""
+    return SweepLog(
+        platform=platform, handle=handle, subscription_id=sub_id,
+        is_live=is_live, error=(error or None), notified=bool(notified),
+        room_id=(room_id or None), detail=(detail or "")[:500] or None,
+        duration_ms=duration_ms, created_at=now,
+    )
+
+
+async def _flush_sweep_logs(items: list) -> None:
+    """Bulk-insert buffered sweep rows in ONE session + ONE commit.
+
+    The tiktok sweep buffers all 25 rows and flushes once at the end, instead
+    of opening 25 sessions + 25 commits per sweep. Same isolation as before
+    (own session, never touches card state) at 1/25th the session churn.
+    Best-effort: a flush failure only loses that sweep's log rows.
+    """
+    if not items:
+        return
+    try:
+        async with async_session() as _s:
+            _s.add_all(list(items))
+            await _s.commit()
+    except Exception as e:
+        if 'sweep_logs' in str(e).lower() or 'no such table' in str(e).lower():
+            try:
+                from .db import Base, engine
+                async with engine.begin() as conn:
+                    await conn.run_sync(Base.metadata.create_all)
+                async with async_session() as _s2:
+                    _s2.add_all(list(items))
+                    await _s2.commit()
+                    return
+            except Exception:
+                pass
+        logger.debug(f'sweep_log bulk flush failed {type(e).__name__} rows={len(items)}')
+
+
 async def get_global_settings():
     session = await open_session()
     try:
@@ -258,6 +298,7 @@ async def poll_once():
     by_id = {u: sid for sid, u, _, _ in rows}
     checked = 0
     notified = 0
+    pending: list = []  # sweep-log rows, bulk-flushed once at sweep end
 
     for username in usernames:
         checked += 1
@@ -296,7 +337,7 @@ async def poll_once():
                 # ~18MB/sweep climb to the 467MB recycle. Reuse is safe:
                 # not_found comes from the check itself, not cached state.
                 await _close_open_sessions(session, sub.id, now)
-                await _add_sweep_log( "tiktok", username, sub.id, False, "not_found", False, room_id_val, "not_found — tracking rename", duration_ms, now)
+                pending.append(_sweep_row( "tiktok", username, sub.id, False, "not_found", False, room_id_val, "not_found — tracking rename", duration_ms, now))
                 await session.commit()
                 await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                 continue
@@ -305,7 +346,7 @@ async def poll_once():
 
             if err == "check_failed":
                 # Inconclusive (IP flag / timeout) — keep last known card state
-                await _add_sweep_log("tiktok", username, sub.id, None, "check_failed", False, room_id_val, "inconclusive:check_failed", duration_ms, now)
+                pending.append(_sweep_row("tiktok", username, sub.id, None, "check_failed", False, room_id_val, "inconclusive:check_failed", duration_ms, now))
                 await session.commit()
                 await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                 continue
@@ -317,7 +358,7 @@ async def poll_once():
                 if room_id != f"live-{username}" and _last_room_cache.get("tt:" + username) == room_id:
                     sub.is_live = True
                     await _open_session(session, sub, room_id, now)
-                    await _add_sweep_log( "tiktok", username, sub.id, True, None, False, room_id, "dedup skip — same room", duration_ms, now)
+                    pending.append(_sweep_row( "tiktok", username, sub.id, True, None, False, room_id, "dedup skip — same room", duration_ms, now))
                     await session.commit()
                     await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                     continue
@@ -326,7 +367,7 @@ async def poll_once():
                         _last_room_cache["tt:" + username] = room_id
                         sub.is_live = True
                         await _open_session(session, sub, room_id, now)
-                        await _add_sweep_log( "tiktok", username, sub.id, True, None, False, room_id, "cooldown skip — 15m", duration_ms, now)
+                        pending.append(_sweep_row( "tiktok", username, sub.id, True, None, False, room_id, "cooldown skip — 15m", duration_ms, now))
                         await session.commit()
                         await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                         continue
@@ -354,7 +395,7 @@ async def poll_once():
                 sess_row = await _open_session(session, sub, room_id, now)
                 if sess_row.notified:
                     sub.is_live = True
-                    await _add_sweep_log( "tiktok", username, sub.id, True, None, False, room_id, "already notified this room", duration_ms, now)
+                    pending.append(_sweep_row( "tiktok", username, sub.id, True, None, False, room_id, "already notified this room", duration_ms, now))
                     await session.commit()
                     await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
                     continue
@@ -370,10 +411,10 @@ async def poll_once():
                     notified += 1
                     _last_room_cache["tt:" + username] = room_id
                     logger.info(f"notified @{username}")
-                    await _add_sweep_log( "tiktok", username, sub.id, True, None, True, room_id, "notified", duration_ms, now)
+                    pending.append(_sweep_row( "tiktok", username, sub.id, True, None, True, room_id, "notified", duration_ms, now))
                 else:
                     detail = "live but notifications paused" if not notify_on else f"live — webhook failed"
-                    await _add_sweep_log( "tiktok", username, sub.id, True, None, False, room_id, detail, duration_ms, now)
+                    pending.append(_sweep_row( "tiktok", username, sub.id, True, None, False, room_id, detail, duration_ms, now))
             else:
                 sub.is_live = False
                 _last_room_cache.pop("tt:" + username, None)
@@ -383,11 +424,13 @@ async def poll_once():
                 # to the 512MB ceiling. Warm reuse is faster too (no TLS redo).
                 await _close_open_sessions(session, sub.id, now)
                 detail = "offline" if err is None else f"error:{err}"
-                await _add_sweep_log( "tiktok", username, sub.id, False, err, False, room_id_val, detail, duration_ms, now)
+                pending.append(_sweep_row( "tiktok", username, sub.id, False, err, False, room_id_val, detail, duration_ms, now))
 
             await session.commit()
             await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
 
+    # One bulk flush for the whole sweep (1 session + 1 commit for 25 rows).
+    await _flush_sweep_logs(pending)
     return {"checked": checked, "notified": notified}
 
 async def poll_youtube():
