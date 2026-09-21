@@ -1,4 +1,4 @@
-"""Sweep-log routes (admin + superadmin) — moved verbatim from app/api/routes.py (Phase 3)."""
+"""Sweep-log routes (admin + superadmin)."""
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, func
@@ -6,10 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...infrastructure.persistence.database import get_session
 from ...security import require_admin
-from .common import logger
 
 router = APIRouter()
-
 
 @router.get("/logs")
 async def list_logs(
@@ -106,7 +104,6 @@ async def list_logs(
             for r in rows
         ],
     }
-
 
 @router.get("/logs/meta")
 async def logs_meta(session: AsyncSession = Depends(get_session), user=Depends(require_admin)):

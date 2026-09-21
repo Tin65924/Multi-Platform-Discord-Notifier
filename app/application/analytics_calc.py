@@ -2,10 +2,10 @@
 
 Timezone: Asia/Manila has no DST, so a fixed UTC+8 offset is exact
 year-round (no tzdata dependency). All day boundaries use it; instants
-stay UTC in the DB.
+stay UTC in the DB. Window fetching lives in persistence/repos
+(fetch_analytics_window) — this module never touches the DB.
 """
 from datetime import datetime, timedelta, timezone
-from sqlalchemy import select
 
 MANILA = timezone(timedelta(hours=8), "Asia/Manila")
 
@@ -56,26 +56,6 @@ def overlap_minutes(start, end, f, t) -> float:
     s = max(aware_utc(start), f)
     e = min(aware_utc(end) if end else t, t)
     return max(0.0, (e - s).total_seconds() / 60.0)
-
-
-async def fetch_window(session, f, t):
-    """All sessions overlapping [f, t), plus the enabled roster."""
-    from .infrastructure.persistence.models import LiveSession, Subscription
-
-    subs = (
-        await session.execute(
-            select(Subscription).where(Subscription.enabled == True)  # noqa
-        )
-    ).scalars().all()
-    rows = (
-        await session.execute(
-            select(LiveSession).where(
-                LiveSession.started_at < t,
-                (LiveSession.ended_at.is_(None)) | (LiveSession.ended_at > f),
-            )
-        )
-    ).scalars().all()
-    return subs, rows
 
 
 def headline(sessions, active_ids, roster_n, f, t, now):

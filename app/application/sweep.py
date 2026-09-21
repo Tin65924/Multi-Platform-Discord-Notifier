@@ -1,6 +1,6 @@
 """Generic platform sweep — ONE implementation for tiktok/youtube/kick.
 
-Semantics are a verbatim port of the legacy poll_once state machine:
+Canonical sweep state machine:
   snapshot → sort by last_live_at desc → per creator: stuck-heal, check,
   not_found track / inconclusive keep / live notify pipeline / offline flip,
   per-check sleep → single bulk log flush.
@@ -13,7 +13,7 @@ moves them to infrastructure/.
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from ..domain.entities import Creator, SweepRecord, WebhookTarget

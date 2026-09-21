@@ -1,7 +1,4 @@
-"""Shared router helpers — moved verbatim from app/api/routes.py (Phase 3).
-
-No logic changes: _webhook_cfg, _style_for, _payload_for, _analytics_range.
-"""
+"""Shared router helpers: webhook/style/payload resolution + analytics windows."""
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -50,7 +47,7 @@ def _payload_for(sub: Subscription, msg: str, ping: str | None, everyone: bool, 
 
 def _analytics_range(frm: str | None, to: str | None, days: int):
     """UTC instant window from explicit ISO bounds or a trailing day count."""
-    from ...analytics import aware_utc
+    from ...application.analytics_calc import aware_utc
 
     now = datetime.now(timezone.utc)
     t = aware_utc(datetime.fromisoformat(to)) if to else now

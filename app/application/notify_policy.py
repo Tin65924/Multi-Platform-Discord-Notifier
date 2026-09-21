@@ -1,6 +1,6 @@
 """Notify policy — pure pre-send verdicts for a detected live.
 
-Extracted verbatim from the legacy poll_once branching (order preserved):
+Verdict order (dedup → cooldown → send) is the canonical sweep behavior:
   1. same-room dedup (never on fallback rooms — they are not stable ids)
   2. 15-minute notify cooldown
   3. otherwise: proceed to send (session-notified + webhook outcome handled

@@ -11,7 +11,7 @@ from sqlalchemy import or_, select
 
 from ...domain.entities import Creator, CreatorCard, SessionState, SweepRecord, WebhookTarget
 from .database import async_session
-from .models import GlobalSettings, LiveSession, Subscription
+from .models import LiveSession, Subscription
 from ..notify.discord import build_embed, effective_image, send_webhook
 
 logger = logging.getLogger(__name__)
@@ -217,6 +217,24 @@ def _row_of(r: SweepRecord):
         is_live=r.is_live, error=(r.error or None), notified=bool(r.notified),
         room_id=(r.room_id or None), detail=(r.detail or "")[:500] or None,
         duration_ms=r.duration_ms, created_at=r.created_at)
+
+
+async def fetch_analytics_window(session, f, t):
+    """All sessions overlapping [f, t), plus the enabled roster."""
+    subs = (
+        await session.execute(
+            select(Subscription).where(Subscription.enabled == True)  # noqa
+        )
+    ).scalars().all()
+    rows = (
+        await session.execute(
+            select(LiveSession).where(
+                LiveSession.started_at < t,
+                (LiveSession.ended_at.is_(None)) | (LiveSession.ended_at > f),
+            )
+        )
+    ).scalars().all()
+    return subs, rows
 
 
 class WebhookNotifier:

@@ -12,7 +12,7 @@ UTC = timezone.utc
 # --- analytics: tier boundaries -------------------------------------------
 
 def test_status_tiers():
-    from app.analytics import status_for
+    from app.application.analytics_calc import status_for
     assert status_for(0) == "active"
     assert status_for(2) == "active"
     assert status_for(3) == "soft"
@@ -24,7 +24,7 @@ def test_status_tiers():
 
 
 def test_aware_utc_treats_naive_as_utc():
-    from app.analytics import aware_utc
+    from app.application.analytics_calc import aware_utc
     naive = datetime(2026, 9, 1, 12, 0, 0)
     assert aware_utc(naive) == naive.replace(tzinfo=UTC)
     aware = naive.replace(tzinfo=UTC)
@@ -33,8 +33,8 @@ def test_aware_utc_treats_naive_as_utc():
 
 
 def test_days_idle_never_live_counts_from_tracking_start():
-    from app.analytics import days_idle_since
-    from app.analytics import MANILA
+    from app.application.analytics_calc import days_idle_since
+    from app.application.analytics_calc import MANILA
     now = datetime(2026, 9, 21, 12, 0, tzinfo=UTC)
     created = datetime(2026, 9, 11, 12, 0, tzinfo=UTC)  # 10 Manila days back
     idle, hist = days_idle_since(None, created, now)
@@ -44,7 +44,7 @@ def test_days_idle_never_live_counts_from_tracking_start():
 
 
 def test_overlap_minutes_clips_and_open_ends_at_t():
-    from app.analytics import overlap_minutes
+    from app.application.analytics_calc import overlap_minutes
     f = datetime(2026, 9, 20, 0, 0, tzinfo=UTC)
     t = datetime(2026, 9, 21, 0, 0, tzinfo=UTC)
     # fully inside
@@ -58,14 +58,14 @@ def test_overlap_minutes_clips_and_open_ends_at_t():
 
 
 def test_pct_change_none_on_zero_prev():
-    from app.analytics import pct_change
+    from app.application.analytics_calc import pct_change
     assert pct_change(10, 0) == None  # noqa: E711
     assert pct_change(150, 100) == 50.0
     assert pct_change(50, 100) == -50.0
 
 
 def test_handle_flagged_needs_3_days():
-    from app.analytics import handle_flagged
+    from app.application.analytics_calc import handle_flagged
     now = datetime(2026, 9, 21, 12, 0, tzinfo=UTC)
     assert handle_flagged(SimpleNamespace(first_not_found_at=None), now) is False
     assert handle_flagged(SimpleNamespace(first_not_found_at=now - timedelta(days=2)), now) is False
@@ -73,7 +73,7 @@ def test_handle_flagged_needs_3_days():
 
 
 def test_last_live_prefers_sessions_over_columns():
-    from app.analytics import last_live_of
+    from app.application.analytics_calc import last_live_of
     now = datetime(2026, 9, 21, 12, 0, tzinfo=UTC)
     sub = SimpleNamespace(last_live_at=datetime(2026, 9, 1, tzinfo=UTC),
                           last_notified_at=None, created_at=datetime(2026, 1, 1, tzinfo=UTC))

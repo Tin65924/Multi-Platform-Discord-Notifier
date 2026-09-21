@@ -65,10 +65,14 @@ def test_ports_structural_conformance():
     assert isinstance(FakeNotifier(), Notifier)
 
 
-def test_domain_has_no_third_party_imports():
+def test_domain_and_application_have_no_third_party_imports():
     import pathlib
     banned = ("sqlalchemy", "httpx", "fastapi", "pydantic", "TikTokLive", "PIL")
-    for mod in ("result.py", "entities.py", "ports.py", "__init__.py"):
-        src = (pathlib.Path("app/domain") / mod).read_text(encoding="utf-8")
+    mods = [pathlib.Path("app/domain") / m
+            for m in ("result.py", "entities.py", "ports.py", "__init__.py")]
+    mods += [pathlib.Path("app/application") / m
+             for m in ("sweep.py", "notify_policy.py", "analytics_calc.py", "__init__.py")]
+    for path in mods:
+        src = path.read_text(encoding="utf-8")
         for dep in banned:
-            assert dep not in src, f"{mod} must stay dependency-free, found {dep}"
+            assert dep not in src, f"{path} must stay dependency-free, found {dep}"

@@ -1,4 +1,4 @@
-"""Subscription routes — moved verbatim from app/api/routes.py (Phase 3)."""
+"""Subscription (creator) routes."""
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import select, func

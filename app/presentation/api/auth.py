@@ -1,4 +1,4 @@
-"""Auth routes (Phase 5: login rate-limit)."""
+"""Auth routes (login rate-limit included)."""
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -16,7 +16,6 @@ from ...security import (
     SESSION_KEY,
     get_current_user,
 )
-from .common import logger
 
 router = APIRouter()
 
@@ -28,7 +27,6 @@ LOGIN_LIMIT = 10
 LOGIN_WINDOW_SECONDS = 300
 _LOGIN_MAP_CAP = 5000
 
-
 def _client_ip(request: Request) -> str:
     try:
         fwd = (request.headers.get("x-forwarded-for") or "").strip()
@@ -37,7 +35,6 @@ def _client_ip(request: Request) -> str:
         return request.client.host if request.client else "unknown"
     except Exception:
         return "unknown"
-
 
 def _login_allowed(ip: str, *, now: float | None = None,
                    limit: int = LOGIN_LIMIT, window: int = LOGIN_WINDOW_SECONDS) -> bool:
@@ -53,7 +50,6 @@ def _login_allowed(ip: str, *, now: float | None = None,
         return True
     ent[0] += 1
     return ent[0] <= limit
-
 
 @router.post("/login")
 async def login(payload: LoginIn, request: Request, session: AsyncSession = Depends(get_session)):
@@ -71,7 +67,6 @@ async def login(payload: LoginIn, request: Request, session: AsyncSession = Depe
     await log_audit(user.username, "login", "dashboard login")
     return {"msg": "Logged in", "username": user.username, "role": user.role}
 
-
 @router.post("/logout")
 async def logout(request: Request):
     user = await get_current_user(request)
@@ -80,14 +75,12 @@ async def logout(request: Request):
         await log_audit(user["username"], "logout", "dashboard logout")
     return {"msg": "Logged out"}
 
-
 @router.get("/me")
 async def me(request: Request):
     user = await get_current_user(request)
     if not user:
         raise HTTPException(401, "Login required")
     return user
-
 
 @router.post("/me/password")
 async def change_own_password(

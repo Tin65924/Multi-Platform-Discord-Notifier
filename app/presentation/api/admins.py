@@ -1,4 +1,4 @@
-"""Admin + audit routes (superadmin only) — moved verbatim from app/api/routes.py (Phase 3)."""
+"""Admin + audit routes (superadmin only)."""
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,10 +11,8 @@ from ...security import (
     hash_password,
     log_audit,
 )
-from .common import logger
 
 router = APIRouter()
-
 
 @router.get("/admins")
 async def list_admins(session: AsyncSession = Depends(get_session), user=Depends(require_superadmin)):
@@ -24,7 +22,6 @@ async def list_admins(session: AsyncSession = Depends(get_session), user=Depends
          "created_at": u.created_at.isoformat() if u.created_at else None}
         for u in result.scalars().all()
     ]
-
 
 @router.post("/admins", status_code=201)
 async def create_admin(payload: AdminCreate, session: AsyncSession = Depends(get_session), user=Depends(require_superadmin)):
@@ -38,7 +35,6 @@ async def create_admin(payload: AdminCreate, session: AsyncSession = Depends(get
     await log_audit(user["username"], "admin.create", f"created {payload.role} {payload.username}")
     return {"msg": f"Created {payload.role} {payload.username}"}
 
-
 @router.post("/admins/{uid}/toggle")
 async def toggle_admin(uid: int, session: AsyncSession = Depends(get_session), user=Depends(require_superadmin)):
     target = await session.get(User, uid)
@@ -50,7 +46,6 @@ async def toggle_admin(uid: int, session: AsyncSession = Depends(get_session), u
     await session.commit()
     await log_audit(user["username"], "admin.toggle", f"{'enabled' if target.is_active else 'disabled'} {target.username}")
     return {"msg": f"{'Enabled' if target.is_active else 'Disabled'} {target.username}"}
-
 
 @router.delete("/admins/{uid}")
 async def delete_admin(uid: int, session: AsyncSession = Depends(get_session), user=Depends(require_superadmin)):
@@ -67,7 +62,6 @@ async def delete_admin(uid: int, session: AsyncSession = Depends(get_session), u
     await session.commit()
     await log_audit(user["username"], "admin.delete", f"deleted {target.username}")
     return {"msg": f"Deleted {target.username}"}
-
 
 @router.get("/audit")
 async def list_audit(limit: int = 100, session: AsyncSession = Depends(get_session), user=Depends(require_superadmin)):

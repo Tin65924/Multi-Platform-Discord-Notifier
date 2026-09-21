@@ -1,4 +1,4 @@
-"""Settings + broadcast + wildlines routes — moved verbatim from app/api/routes.py (Phase 3)."""
+"""Settings + broadcast + wildlines routes."""
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,10 +8,9 @@ from ...schemas import GlobalSettingsIn
 from ...security import require_admin, require_superadmin, log_audit
 from ...infrastructure.notify.discord import send_webhook
 from ...infrastructure.notify.wildlines import WILD_LINES
-from .common import _webhook_cfg, logger, settings
+from .common import _webhook_cfg, settings
 
 router = APIRouter()
-
 
 @router.get("/settings")
 async def get_settings_api(session: AsyncSession = Depends(get_session), user=Depends(require_admin)):
@@ -38,7 +37,6 @@ async def get_settings_api(session: AsyncSession = Depends(get_session), user=De
         },
     }
 
-
 @router.put("/settings")
 async def put_settings(payload: GlobalSettingsIn, session: AsyncSession = Depends(get_session), user=Depends(require_admin)):
     gs = await session.get(GlobalSettings, 1)
@@ -59,7 +57,6 @@ async def put_settings(payload: GlobalSettingsIn, session: AsyncSession = Depend
     await session.commit()
     await log_audit(user["username"], "webhook.update", "global defaults saved")
     return {"msg": "Settings saved"}
-
 
 @router.post("/send-custom")
 async def send_custom(request: Request, session: AsyncSession = Depends(get_session), user=Depends(require_superadmin)):
@@ -87,7 +84,6 @@ async def send_custom(request: Request, session: AsyncSession = Depends(get_sess
         raise HTTPException(502, "Webhook failed - check URL/permissions (see logs)")
     await log_audit(user["username"], "custom.send", content[:200])
     return {"msg": "Sent — check Discord"}
-
 
 @router.get("/wildlines")
 async def wild_lines(user=Depends(require_admin)):

@@ -1,14 +1,12 @@
-"""Public creator-photo route — moved verbatim from app/api/routes.py (Phase 3)."""
+"""Public creator-photo route."""
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...infrastructure.persistence.database import get_session
 from ...infrastructure.persistence.models import Subscription
-from .common import logger
 
 router = APIRouter()
-
 
 @router.get("/media/creator/{sub_id}")
 async def serve_photo(sub_id: int, session: AsyncSession = Depends(get_session)):

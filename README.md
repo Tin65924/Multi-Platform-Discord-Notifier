@@ -18,7 +18,7 @@ Multi-platform LIVE → Discord notifier (TikTok, YouTube, Kick; Twitch stored, 
 4. Deploy -> open `https://your-app.onrender.com/` -> log in as superadmin -> Defaults tab -> save webhook.
 5. Keep alive + force sweeps (cron-job.org):
    - `GET https://your-app.onrender.com/health` every 14 min (no auth)
-   - `GET https://your-app.onrender.com/api/cron/poll` every 5 min (triggers a sweep, no secret needed; skips if a sweep is already running)
+   - `GET https://your-app.onrender.com/api/cron/poll` every 5 min (skips if a sweep is already running). Set `CRON_SECRET` in Render env and append `?secret=...` to lock the trigger; unset = open.
 
 First deploy runs DB migrations automatically (`init_db`): creates tables, backfills the `platform` column, and swaps the handle-unique index for the composite `(platform, handle)` one. Safe to redeploy — all steps are idempotent.
 
@@ -28,21 +28,34 @@ First deploy runs DB migrations automatically (`init_db`): creates tables, backf
 python -m venv venv
 .\venv\Scripts\activate
 pip install -r requirements.txt
+pip install -r requirements-test.txt  # pytest, local/CI only (never on Render)
 copy .env.example .env  # sqlite default; fill platform keys as needed
+.\venv\Scripts\python -m pytest tests -q
 uvicorn app.main:app --reload
 ```
 
 ## Security
 
 - No secrets in repo, only `.env.example` (`.env` is gitignored)
-- Session login (admin/superadmin roles, pbkdf2 hashes); `/api/cron/poll` is an open trigger that skips when a sweep is already running
+- Session login (admin/superadmin roles, pbkdf2 hashes, 10-attempts/5-min per-IP rate limit); `/api/cron/poll` accepts an optional `CRON_SECRET`
 - Webhook URL validated by regex; creator handles normalized per platform; SQL via ORM
 - Logs redacted (webhook URLs, DB URL) — see `app/logging_config.py`
 - Platform secrets are server-side only, never sent to the frontend
 
+## Architecture (pragmatic Clean Architecture)
+
+Dependency direction only: `presentation → application → domain ← infrastructure`.
+
+- `app/domain/` — pure entities, `CheckOutcome` taxonomy, ports (Protocols). No third-party imports (enforced by test).
+- `app/application/` — one generic sweep (`sweep.py`) + pure notify policy. All branching lives here; fully unit-tested.
+- `app/infrastructure/` — side effects: `checkers/` (one folder per platform + port), `persistence/` (models, engine, repo implementations), `notify/` (Discord embeds/sender), `media/` (photo uploads), `scheduler/` (poll loop, memory guard, schedule state).
+- `app/presentation/api/` — one router per resource; thin (parse → service → shape).
+- `app/poller.py` — sweep wrappers + maintenance only. `app/core` stays at top level (`config.py`, `security.py`, `logging_config.py`).
+- `tests/` — 50+ tests: pure characterization, sweep fakes, sqlite end-to-end, route inventory.
+
 ## How it works
 
 - One row per platform account (`platform` + handle, composite unique). Same name can live on TikTok *and* Kick; never twice on one platform.
-- Poller sweeps TikTok (unofficial TikTokLive lib) + YouTube (keyless page parse + optional API confirm) + Kick (official API, one batched call) every `CHECK_INTERVAL_SECONDS`.
+- One generic sweep (`application/sweep.py`) drives all platforms; adapters live in `infrastructure/checkers/` (TikTok via TikTokLive lib, YouTube keyless page parse + optional API confirm, Kick official API).
 - Deduplication by session id (`room_id`/`videoId`/`start_time`) + 15 min cooldown. Inconclusive checks preserve card state instead of flipping offline.
 - Dashboard: platform filter card, creator cards grid, EDIT/PREVIEW/REMOVE/TEST/FORCE per card, global defaults, admins + audit (superadmin).

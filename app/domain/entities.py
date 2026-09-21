@@ -4,7 +4,7 @@ These are the shapes the application layer reasons about. Infrastructure
 (SQLAlchemy rows) maps to/from them at repository boundaries (Phase 4).
 Field sets mirror exactly what the sweep reads today — nothing more.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 
 

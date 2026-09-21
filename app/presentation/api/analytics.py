@@ -1,4 +1,4 @@
-"""Analytics routes — moved verbatim from app/api/routes.py (Phase 3)."""
+"""Analytics routes (combination data comes from the analytics calc module)."""
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -7,28 +7,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...infrastructure.persistence.database import get_session
 from ...infrastructure.persistence.models import Subscription, LiveSession
 from ...security import require_admin
-from .common import _analytics_range, logger
+from .common import _analytics_range
 
 router = APIRouter()
-
 
 @router.get("/analytics/overview")
 async def analytics_overview(days: int = 30, platform: str = "",
                              session: AsyncSession = Depends(get_session), user=Depends(require_admin)):
     """Ranked warn/remove shortlist: least active creators on top."""
-    from ...analytics import fetch_window, per_creator
+    from ...application.analytics_calc import per_creator
+    from ...infrastructure.persistence.repos import fetch_analytics_window as fetch_window
 
     f, t, now = _analytics_range(None, None, days)
     subs, rows = await fetch_window(session, f, t)
     return {"days": max(1, min(days, 180)),
             "rows": per_creator(subs, rows, f, t, now, (platform or "").lower().strip())}
 
-
 @router.get("/analytics/kpis")
 async def analytics_kpis(frm: str | None = None, to: str | None = None, days: int = 30, platform: str = "",
                          session: AsyncSession = Depends(get_session), user=Depends(require_admin)):
     """Headline KPIs + trends vs previous equal period + daily series + ranked rows."""
-    from ...analytics import fetch_window, per_creator, headline, daily_series, overlap_minutes, pct_change
+    from ...application.analytics_calc import per_creator, headline, daily_series, overlap_minutes, pct_change
+    from ...infrastructure.persistence.repos import fetch_analytics_window as fetch_window
 
     f, t, now = _analytics_range(frm, to, days)
     plat = (platform or "").lower().strip()
@@ -53,12 +53,11 @@ async def analytics_kpis(frm: str | None = None, to: str | None = None, days: in
             "daily": daily_series(rows, f, t, now),
             "rows": per_creator(subs, rows, f, t, now, plat)}
 
-
 @router.get("/analytics/creator/{sub_id}")
 async def analytics_creator(sub_id: int, days: int = 30,
                             session: AsyncSession = Depends(get_session), user=Depends(require_admin)):
     """Session history for one creator (newest first)."""
-    from ...analytics import aware_utc
+    from ...application.analytics_calc import aware_utc
 
     sub = await session.get(Subscription, sub_id)
     if not sub:

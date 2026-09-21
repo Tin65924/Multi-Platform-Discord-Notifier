@@ -1,4 +1,4 @@
-"""Schedule route — moved verbatim from app/api/routes.py (Phase 3)."""
+"""Schedule route (next sweep + per-creator ETA)."""
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -7,10 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...infrastructure.persistence.database import get_session
 from ...infrastructure.persistence.models import Subscription
 from ...security import require_admin
-from .common import logger
 
 router = APIRouter()
-
 
 @router.get("/schedule")
 async def get_schedule(session: AsyncSession = Depends(get_session), user=Depends(require_admin)):
@@ -30,7 +28,7 @@ async def get_schedule(session: AsyncSession = Depends(get_session), user=Depend
         select(Subscription).where(Subscription.enabled == True).order_by(Subscription.id)  # noqa
     )
     subs = result.scalars().all()
-    # Same sort as poll_once: active (recent last_live_at) first
+    # Same sort as the generic sweep: active (recent last_live_at) first
     def _key(s):
         v = s.last_live_at
         if v is not None and v.tzinfo is None:

@@ -258,20 +258,16 @@ async def maintenance():
                 await session.commit()
             except Exception as e:
                 logger.debug(f"stuck heal skipped err={type(e).__name__}")
-            # Retention: sweep_logs 2-day auto-delete (also pruned on boot in db.init_db)
+            # Retention: sweep_logs 2-day auto-delete (also pruned on boot in database.init_db)
             try:
                 cut2 = now - timedelta(days=2)
                 await session.execute(text("DELETE FROM sweep_logs WHERE created_at < :cut"), {"cut": cut2})
                 await session.commit()
             except Exception as e:
                 logger.debug(f"sweep prune skipped err={type(e).__name__}")
-            # Stale-live guard is now the targeted >3h heal above (per-card, rare).
-            # The old 30m blind clear wiped all warm clients without close() and
-            # re-created them next sweep — a 20MB spike each time on top of the
-            # per-sweep churn. Removed: warm reuse is the steady state.
-            # _maintenance_avatars removed: avatars now refresh on-notify
-            # (fresh avatar fetched right before each notification and saved to card)
-            # Drop checker clients for removed creators; cap attempt memory.
+            # Warm clients are reused across sweeps (never bulk-cleared).
+            # Avatars refresh on-notify. Drop checker clients for removed
+            # creators; cap attempt memory.
             try:
                 from .infrastructure.checkers.tiktok import checker as _tt
 
