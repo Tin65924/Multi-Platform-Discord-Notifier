@@ -13,7 +13,15 @@ from .logging_config import setup_logging
 from .config import get_settings
 from .db import init_db
 from .security import get_current_user
-from .api.routes import router as api_router
+from .presentation.api.auth import router as auth_router
+from .presentation.api.admins import router as admins_router
+from .presentation.api.subscriptions import router as subscriptions_router
+from .presentation.api.logs import router as logs_router
+from .presentation.api.schedule import router as schedule_router
+from .presentation.api.settings import router as settings_router
+from .presentation.api.media import router as media_router
+from .presentation.api.analytics import router as analytics_router
+from .presentation.api.misc import router as misc_router
 from .poller import poll_loop
 
 settings = get_settings()
@@ -57,7 +65,10 @@ app.add_middleware(SessionMiddleware, secret_key=settings.APP_SECRET_KEY, max_ag
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
-app.include_router(api_router, prefix="/api")
+for _r in (auth_router, admins_router, subscriptions_router, logs_router,
+           schedule_router, settings_router, media_router, analytics_router,
+           misc_router):
+    app.include_router(_r, prefix="/api")
 
 
 @app.get("/health")
