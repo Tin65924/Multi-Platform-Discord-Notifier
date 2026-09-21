@@ -60,7 +60,7 @@ def overlap_minutes(start, end, f, t) -> float:
 
 async def fetch_window(session, f, t):
     """All sessions overlapping [f, t), plus the enabled roster."""
-    from .models import LiveSession, Subscription
+    from .infrastructure.persistence.models import LiveSession, Subscription
 
     subs = (
         await session.execute(

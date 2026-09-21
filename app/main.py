@@ -11,7 +11,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .logging_config import setup_logging
 from .config import get_settings
-from .db import init_db
+from .infrastructure.persistence.database import init_db
 from .security import get_current_user
 from .presentation.api.auth import router as auth_router
 from .presentation.api.admins import router as admins_router
@@ -33,7 +33,7 @@ poll_task: asyncio.Task | None = None
 
 async def _warm_cookies():
     try:
-        from .cookie_provider import get_cookies
+        from .infrastructure.checkers.cookies import get_cookies
 
         cookies = await get_cookies()
         logger.info(f"cookie pre-warm: {sorted(cookies.keys()) or 'none (fallback modes active)'}")

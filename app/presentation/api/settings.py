@@ -2,12 +2,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...db import get_session
-from ...models import GlobalSettings
+from ...infrastructure.persistence.database import get_session
+from ...infrastructure.persistence.models import GlobalSettings
 from ...schemas import GlobalSettingsIn
 from ...security import require_admin, require_superadmin, log_audit
-from ...webhook import send_webhook
-from ...wildlines import WILD_LINES
+from ...infrastructure.notify.discord import send_webhook
+from ...infrastructure.notify.wildlines import WILD_LINES
 from .common import _webhook_cfg, logger, settings
 
 router = APIRouter()

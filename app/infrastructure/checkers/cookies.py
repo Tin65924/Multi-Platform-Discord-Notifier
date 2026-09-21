@@ -34,7 +34,7 @@ _warned_recently: float = 0.0
 
 def _retry_after() -> float:
     try:
-        from .config import get_settings
+        from ...config import get_settings
 
         return float(getattr(get_settings(), "TT_COOKIE_RETRY_SECONDS", RETRY_SECONDS))
     except Exception:
@@ -120,7 +120,7 @@ async def get_cookies() -> dict:
     """Return usable cookies (memory → disk → fresh mint). Never raises."""
     global _mem_cache
     try:
-        from .config import get_settings
+        from ...config import get_settings
 
         if (getattr(get_settings(), "TT_COOKIE_PROVIDER", "on") or "on").lower() == "off":
             return {}

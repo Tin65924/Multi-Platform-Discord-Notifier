@@ -3,7 +3,7 @@ import hmac
 import secrets
 from fastapi import HTTPException, Request
 
-from .db import async_session
+from .infrastructure.persistence.database import async_session
 
 SESSION_KEY = "uid"
 
@@ -29,7 +29,7 @@ def verify_password(password: str, stored: str) -> bool:
 async def log_audit(actor: str, action: str, detail: str | None = None):
     """Fire-and-forget audit entry (own session so it never blocks callers)."""
     try:
-        from .models import AuditLog
+        from .infrastructure.persistence.models import AuditLog
 
         async with async_session() as session:
             session.add(AuditLog(actor=actor, action=action, detail=(detail or "")[:1000]))
@@ -39,8 +39,8 @@ async def log_audit(actor: str, action: str, detail: str | None = None):
 
 
 async def get_current_user(request: Request):
-    from .models import User
-    from .db import open_session
+    from .infrastructure.persistence.models import User
+    from .infrastructure.persistence.database import open_session
 
     uid = request.session.get(SESSION_KEY)
     if not uid:

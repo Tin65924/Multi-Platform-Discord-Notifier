@@ -21,7 +21,7 @@ from TikTokLive.client.errors import UserNotFoundError  # type: ignore
 
 logger = logging.getLogger(__name__)
 
-from .config import get_settings as _get_settings
+from ...config import get_settings as _get_settings
 
 try:
     _settings = _get_settings()
@@ -96,7 +96,7 @@ async def _apply_auth(client):
     global _session_logged
     mode = "anonymous"
     try:
-        from .cookie_provider import get_cookies
+        from .cookies import get_cookies
 
         auto = await get_cookies()
         for k, v in auto.items():
@@ -228,3 +228,28 @@ class TikTokChecker:
 
 
 checker = TikTokChecker()
+
+
+class TikTokLivePort:
+    """domain LiveChecker over the shared warm-client checker.
+
+    Error mapping is exact-legacy: "not_found" stays distinct, any other
+    error string is inconclusive (never flips a card).
+    """
+    platform = "tiktok"
+    fallback_room_prefix = "live-"
+
+    async def check(self, handle: str):
+        from ...domain.result import from_legacy
+        info = await checker.is_live(handle)
+        return from_legacy(info.is_live, getattr(info, "error", None),
+                           handle, getattr(info, "room_id", None))
+
+    def drop(self, handle: str) -> None:
+        checker.drop(handle)
+
+
+class TikTokProfilePort:
+    """domain ProfileLookup over the shared profile-page fetch."""
+    async def fetch(self, handle: str) -> dict | None:
+        return await fetch_tiktok_profile(handle)

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...db import get_session
+from ...infrastructure.persistence.database import get_session
 from ...security import require_admin
 from .common import logger
 
@@ -30,7 +30,7 @@ async def list_logs(
     """
     from sqlalchemy import or_
 
-    from ...models import SweepLog
+    from ...infrastructure.persistence.models import SweepLog
 
     limit = max(1, min(limit, 500))
     offset = max(0, offset)
@@ -111,7 +111,7 @@ async def list_logs(
 @router.get("/logs/meta")
 async def logs_meta(session: AsyncSession = Depends(get_session), user=Depends(require_admin)):
     """Distinct platforms/handles/errors for populating sweep-log filters."""
-    from ...models import SweepLog
+    from ...infrastructure.persistence.models import SweepLog
     plats_q = await session.execute(select(SweepLog.platform).distinct().order_by(SweepLog.platform).limit(20))
     handles_q = await session.execute(select(SweepLog.handle).distinct().order_by(SweepLog.handle).limit(100))
     errors_q = await session.execute(select(SweepLog.error).distinct().order_by(SweepLog.error).limit(50))

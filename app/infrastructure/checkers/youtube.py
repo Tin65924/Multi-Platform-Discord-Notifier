@@ -167,3 +167,31 @@ class YouTubeChecker:
 
 
 checker = YouTubeChecker()
+
+
+class YouTubeLivePort:
+    """domain LiveChecker over the keyless page-parse checker.
+
+    Mapping mirrors the legacy poll_youtube branch: not_found is distinct,
+    a detected live wins even with a confirm quirk, other errors are
+    inconclusive, clean misses are offline.
+    """
+    platform = "youtube"
+    fallback_room_prefix = "live-yt-"
+
+    def __init__(self, api_key: str = ""):
+        self.api_key = api_key or ""
+
+    async def check(self, handle: str):
+        from ...domain.result import CheckOutcome, CheckResult
+        info = await checker.is_live(handle, api_key=self.api_key)
+        if info.error == "not_found":
+            return CheckResult(CheckOutcome.NOT_FOUND, handle, info.room_id, info.error)
+        if info.is_live:
+            return CheckResult(CheckOutcome.LIVE, handle, info.room_id, None)
+        if info.error:
+            return CheckResult(CheckOutcome.INCONCLUSIVE, handle, info.room_id, info.error)
+        return CheckResult(CheckOutcome.OFFLINE, handle, info.room_id, None)
+
+    def drop(self, handle: str) -> None:
+        pass  # single shared httpx client — nothing per-creator to evict

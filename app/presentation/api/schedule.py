@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...db import get_session
-from ...models import Subscription
+from ...infrastructure.persistence.database import get_session
+from ...infrastructure.persistence.models import Subscription
 from ...security import require_admin
 from .common import logger
 

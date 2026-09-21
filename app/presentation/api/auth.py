@@ -3,8 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...db import get_session
-from ...models import User
+from ...infrastructure.persistence.database import get_session
+from ...infrastructure.persistence.models import User
 from ...schemas import LoginIn, PasswordChange
 from ...security import (
     require_admin,

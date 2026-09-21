@@ -147,3 +147,39 @@ class KickChecker:
 
 
 checker = KickChecker()
+
+
+class KickLivePort:
+    """domain LiveChecker over the official batched Kick API.
+
+    NOTE: per-slug check_many calls (one token reuse, one request each). When
+    Kick grows past a handful of creators, prefetch one batched check_many for
+    the whole sweep and pass it as preloaded.
+    """
+    platform = "kick"
+    fallback_room_prefix = "live-kk-"
+
+    def __init__(self, client_id: str = "", client_secret: str = "",
+                 preloaded: dict | None = None):
+        self.client_id = client_id or ""
+        self.client_secret = client_secret or ""
+        self.preloaded = preloaded or {}
+
+    async def check(self, handle: str):
+        from ...domain.result import CheckOutcome, CheckResult
+        slug = (handle or "").strip().lower()
+        if slug in self.preloaded:
+            info = self.preloaded[slug].info
+        else:
+            res = await checker.check_many([slug], self.client_id, self.client_secret)
+            info = res[slug].info
+        if info.error == "not_found":
+            return CheckResult(CheckOutcome.NOT_FOUND, slug, info.room_id, info.error)
+        if info.is_live:
+            return CheckResult(CheckOutcome.LIVE, slug, info.room_id, None)
+        if info.error:
+            return CheckResult(CheckOutcome.INCONCLUSIVE, slug, info.room_id, info.error)
+        return CheckResult(CheckOutcome.OFFLINE, slug, info.room_id, None)
+
+    def drop(self, handle: str) -> None:
+        pass  # stateless API client — nothing per-creator to evict

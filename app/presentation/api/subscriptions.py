@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...db import get_session
-from ...models import Subscription, GlobalSettings, LiveSession
+from ...infrastructure.persistence.database import get_session
+from ...infrastructure.persistence.models import Subscription, GlobalSettings, LiveSession
 from ...schemas import (
     SubscriptionCreate, HandleUpdate, SubscriptionStyleIn, normalize_handle,
 )
@@ -13,10 +13,10 @@ from ...security import (
     require_admin,
     log_audit,
 )
-from ...tiktok import checker, fetch_tiktok_profile
-from ...webhook import send_webhook, platform_label, display_account
-from ...webhook import served_photo_url
-from ...images import process_upload, MAX_UPLOAD_BYTES
+from ...infrastructure.checkers.tiktok import checker, fetch_tiktok_profile
+from ...infrastructure.notify.discord import send_webhook, platform_label, display_account
+from ...infrastructure.notify.discord import served_photo_url
+from ...infrastructure.media.photos import process_upload, MAX_UPLOAD_BYTES
 from .common import _payload_for, _webhook_cfg, logger, settings
 
 router = APIRouter()
@@ -206,7 +206,7 @@ async def update_handle(sub_id: int, payload: HandleUpdate, session: AsyncSessio
     # Never fails the update itself.
     if (sub.platform or "tiktok") == "tiktok":
         try:
-            from ...tiktok import fetch_tiktok_profile
+            from ...infrastructure.checkers.tiktok import fetch_tiktok_profile
 
             prof = await fetch_tiktok_profile(handle)
             if prof:
@@ -240,7 +240,7 @@ async def mark_offline(sub_id: int, session: AsyncSession = Depends(get_session)
             _last_room_cache.pop(pfx + sub.tiktok_username, None)
         if (sub.platform or "tiktok") == "tiktok":
             try:
-                from ...tiktok import checker
+                from ...infrastructure.checkers.tiktok import checker
                 checker.drop(sub.tiktok_username)  # pop + close httpx (bare pop leaks)
             except Exception:
                 pass
@@ -332,13 +332,13 @@ async def check_now(sub_id: int, session: AsyncSession = Depends(get_session), u
         raise HTTPException(404, "Not found")
     plat = (sub.platform or "tiktok").lower()
     if plat == "youtube":
-        from ...youtube import checker as yt_checker
+        from ...infrastructure.checkers.youtube import checker as yt_checker
         info = await yt_checker.is_live(sub.tiktok_username, api_key=settings.YOUTUBE_API_KEY or "")
         if info.error and not info.is_live:
             raise HTTPException(502, f"YouTube check inconclusive ({info.error}) — try again next sweep")
         return {"is_live": info.is_live, "room_id": info.room_id}
     if plat == "kick":
-        from ...kick import checker as kk_checker
+        from ...infrastructure.checkers.kick import checker as kk_checker
         if not kk_checker.configured(settings.KICK_CLIENT_ID, settings.KICK_CLIENT_SECRET):
             raise HTTPException(400, "Kick checks need KICK_CLIENT_ID/SECRET in .env first")
         info = await kk_checker.is_live(
@@ -350,7 +350,7 @@ async def check_now(sub_id: int, session: AsyncSession = Depends(get_session), u
         return {"is_live": info.is_live, "room_id": info.room_id}
     if plat != "tiktok":
         raise HTTPException(400, f"Live checks for {platform_label(sub.platform)} aren't supported yet — creator stored for later")
-    from ...tiktok import _settings as _tt_settings
+    from ...infrastructure.checkers.tiktok import _settings as _tt_settings
 
     info = await checker.is_live(sub.tiktok_username)
     return {

@@ -1,7 +1,7 @@
 from sqlalchemy import String, Boolean, DateTime, LargeBinary, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime, timezone
-from .db import Base
+from .database import Base
 
 ROLE_SUPERADMIN = "superadmin"
 ROLE_ADMIN = "admin"
@@ -127,7 +127,8 @@ class SweepLog(Base):
 
     One row per creator per sweep: what was checked, what happened, was it
     notified. Created by create_all — no manual migration needed.
-    Pruned to newest 10k rows / 7 days (see db.init_db).
+    Auto-deleted after 2 days (+ 90k-row safety cap); pruned on boot and
+    every sweep (see database.init_db + poller.maintenance).
     """
 
     __tablename__ = "sweep_logs"

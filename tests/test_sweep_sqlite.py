@@ -14,8 +14,8 @@ UTC = timezone.utc
 
 @pytest.fixture()
 def db():
-    from app.db import async_session, init_db
-    from app.models import GlobalSettings, Subscription, SweepLog
+    from app.infrastructure.persistence.database import async_session, init_db
+    from app.infrastructure.persistence.models import GlobalSettings, Subscription, SweepLog
     from sqlalchemy import delete, select
 
     async def _setup():
@@ -43,8 +43,8 @@ def db():
 
 
 def _add_sub(handle):
-    from app.db import async_session
-    from app.models import Subscription
+    from app.infrastructure.persistence.database import async_session
+    from app.infrastructure.persistence.models import Subscription
 
     async def _go():
         async with async_session() as s:
@@ -55,7 +55,9 @@ def _add_sub(handle):
 
 def _run_poll(monkeypatch, is_live, notified_ok=True):
     import app.poller as poller
-    from app.tiktok import LiveInfo
+    import app.infrastructure.checkers.tiktok as tt
+    import app.infrastructure.persistence.repos as repos
+    from app.infrastructure.checkers.tiktok import LiveInfo
 
     async def fake_is_live(username):
         clean = username.strip().lstrip("@").lower()
@@ -70,16 +72,16 @@ def _run_poll(monkeypatch, is_live, notified_ok=True):
         sent.append(payload)
         return notified_ok
 
-    monkeypatch.setattr(poller.checker, "is_live", fake_is_live)
-    monkeypatch.setattr(poller, "fetch_tiktok_profile", fake_profile)
-    monkeypatch.setattr(poller, "send_webhook", fake_send)
+    monkeypatch.setattr(tt.checker, "is_live", fake_is_live)
+    monkeypatch.setattr(tt, "fetch_tiktok_profile", fake_profile)
+    monkeypatch.setattr(repos, "send_webhook", fake_send)
     out = asyncio.run(poller.poll_once())
     return out, sent
 
 
 def _sub(handle):
-    from app.db import async_session
-    from app.models import Subscription
+    from app.infrastructure.persistence.database import async_session
+    from app.infrastructure.persistence.models import Subscription
     from sqlalchemy import select
 
     async def _go():
@@ -93,8 +95,8 @@ def _sub(handle):
 
 
 def _logs(handle):
-    from app.db import async_session
-    from app.models import SweepLog
+    from app.infrastructure.persistence.database import async_session
+    from app.infrastructure.persistence.models import SweepLog
     from sqlalchemy import select
 
     async def _go():
@@ -115,7 +117,7 @@ def test_offline_sweep_end_to_end(db, monkeypatch):
 
 
 def test_live_notify_then_dedup(db, monkeypatch):
-    from app.tiktok import LiveInfo
+    from app.infrastructure.checkers.tiktok import LiveInfo
     _add_sub("live_bob")
     out, sent = _run_poll(monkeypatch, {"live_bob": LiveInfo(True, "room7", "live_bob")})
     assert (out["checked"], out["notified"]) == (1, 1)
@@ -130,7 +132,7 @@ def test_live_notify_then_dedup(db, monkeypatch):
 
 
 def test_not_found_tracked_end_to_end(db, monkeypatch):
-    from app.tiktok import LiveInfo
+    from app.infrastructure.checkers.tiktok import LiveInfo
     _add_sub("ghost_renamed")
     out, sent = _run_poll(
         monkeypatch, {"ghost_renamed": LiveInfo(False, None, "ghost_renamed", "not_found")})

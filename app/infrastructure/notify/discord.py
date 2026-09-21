@@ -18,7 +18,7 @@ _DISCORD_UA = (
 # would retry every sweep and extend the rate-limit.)
 _backoff_until: float = 0.0
 
-from .config import get_settings as _get_settings
+from ...config import get_settings as _get_settings
 
 try:
     _settings = _get_settings()

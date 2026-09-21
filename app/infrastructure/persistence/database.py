@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy.orm import DeclarativeBase
 import logging
 import os
-from .config import get_settings
+from ...config import get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -265,7 +265,7 @@ async def _migrate_sqlite(conn):
 
 async def init_db():
     from . import models  # noqa: F401 - register tables
-    from .security import hash_password
+    from ...security import hash_password
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

@@ -85,7 +85,7 @@ def test_last_live_prefers_sessions_over_columns():
 # --- webhook: mentions / embeds --------------------------------------------
 
 def test_discord_mention_prefers_numeric_id():
-    from app.webhook import discord_mention
+    from app.infrastructure.notify.discord import discord_mention
     assert discord_mention("123", "name", "@h") == "<@123>"
     assert discord_mention(" 123 ", None, "@h") == "<@123>"
     assert discord_mention("", "name", "@h") == "@name"
@@ -93,7 +93,7 @@ def test_discord_mention_prefers_numeric_id():
 
 
 def test_parse_color_falls_back_to_pink():
-    from app.webhook import parse_color
+    from app.infrastructure.notify.discord import parse_color
     assert parse_color("#FF0050") == 0xFF0050
     assert parse_color("FF0050") == 0xFF0050
     assert parse_color("garbage") == 0xFF0050
@@ -101,7 +101,7 @@ def test_parse_color_falls_back_to_pink():
 
 
 def test_build_embed_shape_and_mentions():
-    from app.webhook import build_embed
+    from app.infrastructure.notify.discord import build_embed
     p = build_embed("somehandle", message="{discord} is LIVE!", ping_role_id=None,
                     ping_everyone=False, image_url=None, color="#FF0050",
                     author_name="Creator", discord_username="du", discord_user_id="999")
@@ -117,7 +117,7 @@ def test_build_embed_shape_and_mentions():
 
 
 def test_build_embed_everyone_prepend():
-    from app.webhook import build_embed
+    from app.infrastructure.notify.discord import build_embed
     p = build_embed("h", message="{discord} is LIVE!", ping_everyone=True,
                     discord_username="du")
     assert p["content"].startswith("@everyone\n")
@@ -125,7 +125,7 @@ def test_build_embed_everyone_prepend():
 
 
 def test_effective_image_precedence():
-    from app.webhook import effective_image
+    from app.infrastructure.notify.discord import effective_image
     sub = SimpleNamespace(id=1, image_mime=None, image_url="http://link/img.png",
                           avatar_url="http://av/a.png")
     assert effective_image(sub, "http://global/g.png") == "http://link/img.png"
@@ -136,7 +136,7 @@ def test_effective_image_precedence():
 
 
 def test_resolve_webhook_cfg_row_beats_env():
-    from app.webhook import resolve_webhook_cfg
+    from app.infrastructure.notify.discord import resolve_webhook_cfg
     gs = SimpleNamespace(webhook_url="https://discord.com/api/webhooks/1/abc",
                          ping_role_id="77", custom_message="hi {discord}",
                          ping_everyone=False, embed_image_url="http://i/x.png",
@@ -172,14 +172,14 @@ def test_normalize_handle_youtube_channel_id_verbatim():
 # --- db url helpers ----------------------------------------------------------
 
 def test_normalize_db_url_to_asyncpg():
-    from app.db import normalize_db_url
+    from app.infrastructure.persistence.database import normalize_db_url
     assert normalize_db_url("postgres://u:p@h/db").startswith("postgresql+asyncpg://")
     assert normalize_db_url("postgresql://u:p@h/db").startswith("postgresql+asyncpg://")
     assert normalize_db_url("sqlite+aiosqlite:///./x.db").startswith("sqlite")
 
 
 def test_sanitize_query_drops_unknown_keeps_ssl():
-    from app.db import _sanitize_query
+    from app.infrastructure.persistence.database import _sanitize_query
     clean, mode = _sanitize_query("postgresql+asyncpg://u:p@h/db?sslmode=require&channel_binding=require")
     assert mode == "require"
     assert "channel_binding" not in clean
@@ -217,7 +217,7 @@ def test_password_roundtrip():
 # --- wildlines ------------------------------------------------------------------
 
 def test_wildlines_count_and_render():
-    from app.wildlines import WILD_LINES, random_wild_line
+    from app.infrastructure.notify.wildlines import WILD_LINES, random_wild_line
     assert len(WILD_LINES) == 100
     line = random_wild_line("TestName")
     assert isinstance(line, str) and len(line) > 0
