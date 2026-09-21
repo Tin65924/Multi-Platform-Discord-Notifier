@@ -189,17 +189,17 @@ def test_sanitize_query_drops_unknown_keeps_ssl():
 # --- poller: recycle policy ---------------------------------------------------
 
 def test_should_recycle_only_when_climbing_past_ceiling():
-    from app import poller
-    poller._last_rss = None
-    assert poller.should_recycle(400.0) is False      # first sample arms, never fires
-    assert poller.should_recycle(440.0) is False      # climbing but under ceiling
-    assert poller.should_recycle(440.0) is False      # flat high -> equilibrium, leave alone
-    assert poller.should_recycle(451.0) is True       # climbing past 450 -> recycle
-    assert poller.should_recycle(300.0, 461.0) is True  # cur is the real OOM line
+    from app.infrastructure.scheduler import loop
+    loop._last_rss = None
+    assert loop.should_recycle(400.0) is False      # first sample arms, never fires
+    assert loop.should_recycle(440.0) is False      # climbing but under ceiling
+    assert loop.should_recycle(440.0) is False      # flat high -> equilibrium, leave alone
+    assert loop.should_recycle(451.0) is True       # climbing past 450 -> recycle
+    assert loop.should_recycle(300.0, 461.0) is True  # cur is the real OOM line
 
 
 def test_rss_helpers_never_raise():
-    from app.poller import rss_mb, rss_current_mb
+    from app.infrastructure.scheduler.loop import rss_mb, rss_current_mb
     assert rss_mb() is None or isinstance(rss_mb(), float)
     assert rss_current_mb() is None or isinstance(rss_current_mb(), float)
 

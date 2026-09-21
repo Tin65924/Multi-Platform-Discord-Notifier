@@ -22,7 +22,7 @@ async def get_schedule(session: AsyncSession = Depends(get_session), user=Depend
     """
     from datetime import timedelta as _td
 
-    from ...poller import get_schedule_state
+    from ...infrastructure.scheduler.state import get_schedule_state
 
     state = get_schedule_state()
     # Rebuild the poller's sort order so ETA matches reality.

@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     YOUTUBE_API_KEY: str = ""
     TT_COOKIE_RETRY_SECONDS: int = 1800  # backoff after a failed mint
     MAX_CREATORS: int = 60  # Render Free comfort cap across all platforms
+    # External sweep trigger auth: when set, /api/cron/poll requires ?secret=.
+    # Unset = open trigger (legacy). Set it in Render env + your cron caller.
+    CRON_SECRET: str = ""
     CHECK_INTERVAL_SECONDS: int = 45  # gap between sweeps (prod: 3-platform sweep)
     CHECK_JITTER_SECONDS: int = 10
     PER_CHECK_SLEEP_SECONDS: float = 1.0

@@ -1,11 +1,27 @@
-"""Cron trigger + memory debug routes — moved verbatim from app/api/routes.py (Phase 3)."""
-from fastapi import APIRouter, Depends
+"""Cron trigger + memory debug routes (Phase 5: optional CRON_SECRET)."""
+import secrets as _secrets
 
-from ...poller import poll_cycle_try, rss_current_mb, rss_mb
+from fastapi import APIRouter, Depends, HTTPException
+
+from ...infrastructure.scheduler.loop import rss_current_mb, rss_mb
+from ...poller import poll_cycle_try
 from ...security import require_superadmin
-from .common import logger
+from .common import logger, settings
 
 router = APIRouter()
+
+
+def _cron_authorized(provided: str | None) -> bool:
+    """Open when CRON_SECRET is unset (legacy); constant-time compare when set."""
+    want = (settings.CRON_SECRET or "").strip()
+    if not want:
+        return True
+    return _secrets.compare_digest((provided or "").strip(), want)
+
+
+def _require_cron(secret: str | None) -> None:
+    if not _cron_authorized(secret):
+        raise HTTPException(403, "Invalid cron secret")
 
 
 @router.get("/debug/memory")
@@ -47,12 +63,17 @@ async def debug_memory(trace: str = "", user=Depends(require_superadmin)):
 
 
 @router.post("/cron/poll")
-async def cron_poll():
-    """Open trigger (no secret): runs a sweep unless one is already running."""
+async def cron_poll(secret: str | None = None):
+    """Sweep trigger: runs unless one is already running.
+
+    Pass ?secret= when CRON_SECRET is set (Render env). Unset = open (legacy).
+    """
+    _require_cron(secret)
     return await poll_cycle_try()
 
 
 @router.get("/cron/poll")
-async def cron_poll_get():
-    """Open trigger (no secret): runs a sweep unless one is already running."""
+async def cron_poll_get(secret: str | None = None):
+    """Sweep trigger: runs unless one is already running (see POST variant)."""
+    _require_cron(secret)
     return await poll_cycle_try()

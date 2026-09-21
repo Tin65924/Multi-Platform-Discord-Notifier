@@ -1,4 +1,6 @@
-"""Auth routes — moved verbatim from app/api/routes.py (Phase 3)."""
+"""Auth routes (Phase 5: login rate-limit)."""
+import time
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,15 +20,53 @@ from .common import logger
 
 router = APIRouter()
 
+# Brute-force guard: pbkdf2 at 200k iterations makes every attempt CPU-heavy,
+# so attempts per IP are capped (10 per 5 min window -> 429). Behind Render's
+# proxy the real client IP rides X-Forwarded-For.
+_login_attempts: dict[str, list] = {}  # ip -> [count, window_start_epoch]
+LOGIN_LIMIT = 10
+LOGIN_WINDOW_SECONDS = 300
+_LOGIN_MAP_CAP = 5000
+
+
+def _client_ip(request: Request) -> str:
+    try:
+        fwd = (request.headers.get("x-forwarded-for") or "").strip()
+        if fwd:
+            return fwd.split(",")[0].strip() or "unknown"
+        return request.client.host if request.client else "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _login_allowed(ip: str, *, now: float | None = None,
+                   limit: int = LOGIN_LIMIT, window: int = LOGIN_WINDOW_SECONDS) -> bool:
+    """Count-first gate: every call consumes one attempt. Testable via `now`."""
+    now = time.time() if now is None else now
+    ent = _login_attempts.get(ip)
+    if ent is None or now - ent[1] >= window:
+        if len(_login_attempts) >= _LOGIN_MAP_CAP:
+            # Evict oldest windows first (dicts preserve insertion order).
+            for k in list(_login_attempts)[:1000]:
+                del _login_attempts[k]
+        _login_attempts[ip] = [1, now]
+        return True
+    ent[0] += 1
+    return ent[0] <= limit
+
 
 @router.post("/login")
 async def login(payload: LoginIn, request: Request, session: AsyncSession = Depends(get_session)):
+    ip = _client_ip(request)
+    if not _login_allowed(ip):
+        raise HTTPException(429, "Too many login attempts — try again in a few minutes")
     result = await session.execute(
         select(User).where(User.username == payload.username.strip().lower())
     )
     user = result.scalar_one_or_none()
     if not user or not user.is_active or not verify_password(payload.password, user.password_hash):
         raise HTTPException(401, "Invalid username or password")
+    _login_attempts.pop(ip, None)  # success resets the window
     request.session[SESSION_KEY] = user.id
     await log_audit(user.username, "login", "dashboard login")
     return {"msg": "Logged in", "username": user.username, "role": user.role}

@@ -22,7 +22,7 @@ from .presentation.api.settings import router as settings_router
 from .presentation.api.media import router as media_router
 from .presentation.api.analytics import router as analytics_router
 from .presentation.api.misc import router as misc_router
-from .poller import poll_loop
+from .infrastructure.scheduler.loop import poll_loop
 
 settings = get_settings()
 setup_logging(settings.LOG_LEVEL)
