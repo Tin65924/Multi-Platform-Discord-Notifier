@@ -1,0 +1,4 @@
+# Local/CI test dependencies only — NEVER installed on Render.
+# Usage: .\venv\Scripts\python -m pip install -r requirements-test.txt
+-r requirements.txt
+pytest==8.3.4

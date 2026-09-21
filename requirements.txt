@@ -4,8 +4,8 @@ sqlalchemy[asyncio]==2.0.52
 asyncpg==0.31.0
 pydantic==2.13.5
 pydantic-settings==2.15.0
-httpx==0.27.2
-TikTokLive==6.2.1
+httpx==0.28.1
+TikTokLive==7.0.0
 itsdangerous==2.2.0
 jinja2==3.1.4
 aiosqlite==0.21.0
