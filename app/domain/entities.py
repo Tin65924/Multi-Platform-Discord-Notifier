@@ -22,6 +22,35 @@ class Creator:
 
 
 @dataclass(frozen=True)
+class CreatorCard(Creator):
+    """Full card for embed building + policy (style fields included)."""
+    author_name: str | None = None
+    discord_username: str | None = None
+    discord_user_id: str | None = None
+    image_url: str | None = None
+    avatar_url: str | None = None
+    image_mime: str | None = None
+    color: str | None = None
+
+
+@dataclass(frozen=True)
+class SessionState:
+    """Open-session lookup result: has this room already notified?"""
+    notified: bool
+
+
+@dataclass(frozen=True)
+class WebhookTarget:
+    """Resolved global webhook config for one sweep."""
+    url: str
+    message: str = "{discord} is LIVE!"
+    ping_role_id: str | None = None
+    ping_everyone: bool = True
+    image_url: str | None = None
+    color: str = "#FF0050"
+
+
+@dataclass(frozen=True)
 class SweepRecord:
     """One per-creator check trace for the Logs page (maps 1:1 to sweep_logs)."""
     platform: str

@@ -7,7 +7,7 @@ where a test wants to assert an adapter conforms.
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
-from .entities import Creator, SweepRecord
+from .entities import Creator, CreatorCard, SweepRecord
 from .result import CheckResult
 
 
@@ -19,6 +19,10 @@ class LiveChecker(Protocol):
     fallback_room_prefix: str  # e.g. "live-", "live-yt-", "live-kk-"
 
     async def check(self, handle: str) -> CheckResult:
+        ...
+
+    def drop(self, handle: str) -> None:
+        """Evict a cached client (stuck-heal only). Must close cleanly."""
         ...
 
 
@@ -36,26 +40,44 @@ class Clock(Protocol):
 
 
 class SubscriptionRepo(Protocol):
-    """Creator reads/writes for one sweep. No sessions leak out."""
+    """Creator reads/writes for one sweep. No sessions leak out.
+
+    Session economy mirrors the legacy poller: one short session per method.
+    Methods that also touch LiveSession rows (note_not_found, mark_offline,
+    mark_seen_live, record_live) do so in the SAME session, exactly like the
+    legacy per-creator session did — so per-creator session counts are unchanged.
+    """
     async def snapshot(self, platform: str) -> list[Creator]:
         """All enabled creators on a platform (one short read)."""
         ...
 
-    async def touch_checked(self, sub_id: int, at: datetime) -> None:
+    async def check_in(self, sub_id: int, at: datetime) -> CreatorCard | None:
+        """Stamp last_checked_at and return the full card. None = removed mid-sweep."""
         ...
 
-    async def mark_not_found(self, sub_id: int, at: datetime) -> Creator:
-        """Set is_live=False, stamp first_not_found_at if unset. Returns fresh row."""
+    async def mark_not_found(self, sub_id: int, at: datetime) -> None:
+        """is_live=False (+ stamp first_not_found_at if unset) and close open sessions."""
         ...
 
     async def clear_not_found(self, sub_id: int) -> None:
         ...
 
     async def mark_offline(self, sub_id: int, at: datetime) -> None:
+        """is_live=False and close open sessions."""
         ...
 
-    async def mark_live(self, sub_id: int, room_id: str, at: datetime,
-                        notified: bool) -> None:
+    async def mark_seen_live(self, sub_id: int, platform: str, handle: str,
+                             room_id: str, at: datetime) -> None:
+        """is_live=True and ensure the open session row (dedup/cooldown paths)."""
+        ...
+
+    async def record_live(self, sub_id: int, platform: str, handle: str,
+                          room_id: str, at: datetime, did_notify: bool) -> None:
+        """last_room_id/last_live_at/is_live (+last_notified_at when did_notify)
+        and ensure the open session row (stamped notified when did_notify)."""
+        ...
+
+    async def update_avatar(self, sub_id: int, avatar_url: str, at: datetime) -> None:
         ...
 
 

@@ -54,6 +54,9 @@ def test_ports_structural_conformance():
         async def check(self, handle: str):
             raise NotImplementedError
 
+        def drop(self, handle: str):
+            pass
+
     class FakeNotifier:
         async def send(self, payload: dict) -> bool:
             return True

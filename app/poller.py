@@ -257,22 +257,191 @@ async def get_global_settings():
     finally:
         await session.close()
 
-async def poll_once():
-    # Snapshot ids/handles in one short session; every creator below gets
-    # its own session. A DB connection is never held across network checks.
-    async with async_session() as session:
-        # NULL is treated as tiktok so pre-platform rows keep polling even
-        # if backfill lagged.
-        result = await session.execute(
-            select(Subscription).where(
-                Subscription.enabled == True,  # noqa
-                or_(Subscription.platform == "tiktok", Subscription.platform.is_(None)),
+# --- Phase 2 transitional adapters -------------------------------------------
+# Temporary composition root: these implement the domain ports with the
+# existing SQLAlchemy / TikTokLive / webhook pieces. They hold NO logic —
+# every branch lives in application/sweep.py. Phase 4 moves them verbatim to
+# infrastructure/ (checkers/, persistence/, notify/).
+class _TikTokCheckerPort:
+    platform = "tiktok"
+    fallback_room_prefix = "live-"
+
+    async def check(self, handle):
+        from .domain.result import from_legacy
+        info = await checker.is_live(handle)
+        return from_legacy(info.is_live, getattr(info, "error", None),
+                           handle, getattr(info, "room_id", None))
+
+    def drop(self, handle):
+        checker.drop(handle)
+
+
+class _ProfilePort:
+    async def fetch(self, handle):
+        return await fetch_tiktok_profile(handle)
+
+
+def _card_of(sub):
+    """ORM Subscription -> domain CreatorCard (detached values only)."""
+    from .domain.entities import CreatorCard
+    return CreatorCard(
+        id=sub.id, handle=sub.tiktok_username, platform=sub.platform or "tiktok",
+        is_live=bool(sub.is_live), last_live_at=sub.last_live_at,
+        last_room_id=sub.last_room_id, last_notified_at=sub.last_notified_at,
+        first_not_found_at=sub.first_not_found_at, author_name=sub.author_name,
+        discord_username=sub.discord_username, discord_user_id=sub.discord_user_id,
+        image_url=sub.image_url, avatar_url=sub.avatar_url,
+        image_mime=sub.image_mime, color=sub.color)
+
+
+class _SubRepoPort:
+    async def snapshot(self, platform):
+        from .domain.entities import Creator
+        async with async_session() as session:
+            result = await session.execute(
+                select(Subscription).where(
+                    Subscription.enabled == True,  # noqa
+                    or_(Subscription.platform == platform,
+                        *([] if platform != "tiktok" else [Subscription.platform.is_(None)])),
+                )
             )
-        )
-        rows = [(s.id, s.tiktok_username, s.last_live_at, s.is_live) for s in result.scalars().all()]
+            return [Creator(id=s.id, handle=s.tiktok_username,
+                            platform=s.platform or "tiktok", is_live=bool(s.is_live),
+                            last_live_at=s.last_live_at, last_room_id=s.last_room_id,
+                            last_notified_at=s.last_notified_at,
+                            first_not_found_at=s.first_not_found_at)
+                    for s in result.scalars().all()]
+
+    async def check_in(self, sub_id, at):
+        async with async_session() as session:
+            sub = await session.get(Subscription, sub_id)
+            if sub is None:
+                return None  # removed mid-sweep
+            sub.last_checked_at = at
+            await session.commit()
+            return _card_of(sub)
+
+    async def mark_not_found(self, sub_id, at):
+        async with async_session() as session:
+            sub = await session.get(Subscription, sub_id)
+            if sub is None:
+                return
+            if sub.first_not_found_at is None:
+                sub.first_not_found_at = at
+                logger.info(f"handle not resolving @{sub.tiktok_username} — tracking for rename")
+            sub.is_live = False
+            await _close_open_sessions(session, sub.id, at)
+            await session.commit()
+
+    async def clear_not_found(self, sub_id):
+        async with async_session() as session:
+            sub = await session.get(Subscription, sub_id)
+            if sub is None:
+                return
+            if sub.first_not_found_at is not None:
+                sub.first_not_found_at = None  # clean read clears streak
+                await session.commit()
+
+    async def mark_offline(self, sub_id, at):
+        async with async_session() as session:
+            sub = await session.get(Subscription, sub_id)
+            if sub is None:
+                return
+            sub.is_live = False
+            await _close_open_sessions(session, sub.id, at)
+            await session.commit()
+
+    async def mark_seen_live(self, sub_id, platform, handle, room_id, at):
+        async with async_session() as session:
+            sub = await session.get(Subscription, sub_id)
+            if sub is None:
+                return
+            sub.is_live = True
+            await _open_session(session, sub, room_id, at)
+            await session.commit()
+
+    async def record_live(self, sub_id, platform, handle, room_id, at, did_notify):
+        async with async_session() as session:
+            sub = await session.get(Subscription, sub_id)
+            if sub is None:
+                return
+            sub.last_room_id = room_id
+            sub.last_live_at = at
+            sub.is_live = True
+            if did_notify:
+                sub.last_notified_at = at
+            row = await _open_session(session, sub, room_id, at)
+            if did_notify:
+                row.notified = True
+            await session.commit()
+
+    async def update_avatar(self, sub_id, avatar_url, at):
+        async with async_session() as session:
+            sub = await session.get(Subscription, sub_id)
+            if sub is None:
+                return
+            sub.avatar_url = avatar_url
+            sub.avatar_checked_at = at
+            await session.commit()
+
+
+class _SessionPort:
+    async def ensure_open(self, sub_id, platform, handle, room_id, at):
+        from .domain.entities import SessionState
+        async with async_session() as session:
+            sub = await session.get(Subscription, sub_id)
+            if sub is None:
+                return SessionState(notified=False)
+            row = await _open_session(session, sub, room_id, at)
+            notified = bool(row.notified)
+            await session.commit()
+            return SessionState(notified=notified)
+
+    async def close_open(self, sub_id, at):
+        async with async_session() as session:
+            await _close_open_sessions(session, sub_id, at)
+            await session.commit()
+
+
+class _SinkPort:
+    async def flush(self, rows):
+        if not rows:
+            return
+        try:
+            async with async_session() as session:
+                session.add_all([SweepLog(
+                    platform=r.platform, handle=r.handle, subscription_id=r.sub_id,
+                    is_live=r.is_live, error=(r.error or None),
+                    notified=bool(r.notified), room_id=(r.room_id or None),
+                    detail=(r.detail or "")[:500] or None,
+                    duration_ms=r.duration_ms, created_at=r.created_at,
+                ) for r in rows])
+                await session.commit()
+        except Exception as e:
+            logger.debug(f'sweep_log bulk flush failed {type(e).__name__} rows={len(rows)}')
+
+
+class _NotifierPort:
+    def __init__(self, url):
+        self.url = url
+
+    async def send(self, payload):
+        return await send_webhook(self.url, payload, timeout=settings.WEBHOOK_TIMEOUT_SECONDS)
+
+
+def _tiktok_payload(card, target):
+    return build_embed(
+        card.handle, message=target.message, ping_role_id=target.ping_role_id,
+        ping_everyone=target.ping_everyone,
+        image_url=effective_image(card, target.image_url),
+        color=card.color or target.color, author_name=card.author_name,
+        discord_username=card.discord_username, discord_user_id=card.discord_user_id)
+
+
+async def poll_once():
+    """TikTok sweep via the generic application sweep (same state machine)."""
+    async with async_session() as session:
         notify_on = await notifications_enabled(session)
-    if not rows:
-        return {"checked": 0, "notified": 0}
 
     cfg = await get_global_settings()
     webhook_url, ping_role_id, custom_message, ping_everyone, embed_image_url, embed_color = cfg
@@ -280,158 +449,22 @@ async def poll_once():
         logger.warning("poll skipped: no webhook configured in DB or env")
         return {"checked": 0, "notified": 0, "error": "no webhook"}
 
-    # Build lookup: username -> last_live_at (None if never live)
-    live_map = {u: ld for _, u, ld, _ in rows}
-    is_live_map = {u: il for _, u, _, il in rows}
-
-    # Sort so creators who went live most recently are checked first.
-    # None values sort last, so never‑live creators end up at the bottom.
-    usernames = sorted(
-        [u for _, u, _, _ in rows],
-        key=lambda u: live_map.get(u) or datetime.min.replace(tzinfo=timezone.utc),
-        reverse=True,
-    )
+    from .application.sweep import SweepConfig, run_platform_sweep
+    from .domain.entities import WebhookTarget
+    out = await run_platform_sweep(
+        checker=_TikTokCheckerPort(), repo=_SubRepoPort(), sessions=_SessionPort(),
+        sink=_SinkPort(), notifier=_NotifierPort(webhook_url), profiles=_ProfilePort(),
+        build_payload=_tiktok_payload,
+        target=WebhookTarget(url=webhook_url, message=custom_message,
+                             ping_role_id=ping_role_id, ping_everyone=ping_everyone,
+                             image_url=embed_image_url, color=embed_color),
+        notify_on=notify_on, room_cache=_last_room_cache,
+        config=SweepConfig(platform="tiktok", cache_prefix="tt:",
+                           per_check_sleep=settings.PER_CHECK_SLEEP_SECONDS))
     # Expose order for schedule ETA (next sweep = _next_sweep_at + index*PER_CHECK_SLEEP)
     global _last_sweep_order
-    _last_sweep_order = list(usernames)
-
-    by_id = {u: sid for sid, u, _, _ in rows}
-    checked = 0
-    notified = 0
-    pending: list = []  # sweep-log rows, bulk-flushed once at sweep end
-
-    for username in usernames:
-        checked += 1
-        # Heal stuck clients: if card has been LIVE for >3h, force fresh client.
-        # This breaks a stale reused TikTokLiveClient that keeps reporting live
-        # after the stream ended (user saw card stuck LIVE hours after 9:30).
-        # Rare path (only stuck cards) — drop() closes httpx properly.
-        try:
-            if is_live_map.get(username) and live_map.get(username):
-                ll = live_map[username]
-                if ll and ll.tzinfo is None:
-                    ll = ll.replace(tzinfo=timezone.utc)
-                if ll and (datetime.now(timezone.utc) - ll).total_seconds() > 3 * 3600:
-                    checker.drop(username)
-        except Exception:
-            pass
-        t0 = time.monotonic()
-        live_info = await checker.is_live(username)
-        duration_ms = int((time.monotonic() - t0) * 1000)
-        now = datetime.now(timezone.utc)
-        async with async_session() as session:
-            sub = await session.get(Subscription, by_id[username])
-            if sub is None:
-                continue  # removed mid-sweep
-            sub.last_checked_at = now
-            err = getattr(live_info, "error", None)
-            room_id_val = getattr(live_info, "room_id", None)
-            if err == "not_found":
-                if sub.first_not_found_at is None:
-                    sub.first_not_found_at = now
-                    logger.info(f"handle not resolving @{sub.tiktok_username} — tracking for rename")
-                sub.is_live = False
-                _last_room_cache.pop("tt:" + username, None)
-                # NOTE: keep the cached client (no evict). Popping here without
-                # close() leaked ~0.75MB/check — at 24 creators that was the
-                # ~18MB/sweep climb to the 467MB recycle. Reuse is safe:
-                # not_found comes from the check itself, not cached state.
-                await _close_open_sessions(session, sub.id, now)
-                pending.append(_sweep_row( "tiktok", username, sub.id, False, "not_found", False, room_id_val, "not_found — tracking rename", duration_ms, now))
-                await session.commit()
-                await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
-                continue
-            if err is None and sub.first_not_found_at is not None:
-                sub.first_not_found_at = None  # clean read clears streak
-
-            if err == "check_failed":
-                # Inconclusive (IP flag / timeout) — keep last known card state
-                pending.append(_sweep_row("tiktok", username, sub.id, None, "check_failed", False, room_id_val, "inconclusive:check_failed", duration_ms, now))
-                await session.commit()
-                await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
-                continue
-
-            if live_info.is_live:
-                room_id = live_info.room_id or f"live-{username}"
-                # Fallback room (fetch failed) never dedups — avoids missing a new live
-                # that reuses the same "live-{handle}" string after an offline gap.
-                if room_id != f"live-{username}" and _last_room_cache.get("tt:" + username) == room_id:
-                    sub.is_live = True
-                    await _open_session(session, sub, room_id, now)
-                    pending.append(_sweep_row( "tiktok", username, sub.id, True, None, False, room_id, "dedup skip — same room", duration_ms, now))
-                    await session.commit()
-                    await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
-                    continue
-                if sub.last_room_id == room_id and sub.last_notified_at:
-                    if (now - _aware(sub.last_notified_at)) < timedelta(seconds=900):
-                        _last_room_cache["tt:" + username] = room_id
-                        sub.is_live = True
-                        await _open_session(session, sub, room_id, now)
-                        pending.append(_sweep_row( "tiktok", username, sub.id, True, None, False, room_id, "cooldown skip — 15m", duration_ms, now))
-                        await session.commit()
-                        await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
-                        continue
-
-                # Fresh avatar for live notification + creator card (replaces 3-day refresh).
-                try:
-                    prof = await fetch_tiktok_profile(username)
-                    if prof and prof.get("avatar_url"):
-                        sub.avatar_url = prof["avatar_url"]
-                        sub.avatar_checked_at = now
-                except Exception:
-                    pass
-
-                payload = build_embed(
-                    username,
-                    message=custom_message,
-                    ping_role_id=ping_role_id,
-                    ping_everyone=ping_everyone,
-                    image_url=effective_image(sub, embed_image_url),
-                    color=sub.color or embed_color,
-                    author_name=sub.author_name,
-                    discord_username=sub.discord_username,
-                    discord_user_id=sub.discord_user_id,
-                )
-                sess_row = await _open_session(session, sub, room_id, now)
-                if sess_row.notified:
-                    sub.is_live = True
-                    pending.append(_sweep_row( "tiktok", username, sub.id, True, None, False, room_id, "already notified this room", duration_ms, now))
-                    await session.commit()
-                    await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
-                    continue
-                ok = False
-                if notify_on:
-                    ok = await send_webhook(webhook_url, payload, timeout=settings.WEBHOOK_TIMEOUT_SECONDS)
-                sub.last_room_id = room_id
-                sub.last_live_at = now
-                sub.is_live = True
-                if ok:
-                    sub.last_notified_at = now
-                    sess_row.notified = True
-                    notified += 1
-                    _last_room_cache["tt:" + username] = room_id
-                    logger.info(f"notified @{username}")
-                    pending.append(_sweep_row( "tiktok", username, sub.id, True, None, True, room_id, "notified", duration_ms, now))
-                else:
-                    detail = "live but notifications paused" if not notify_on else f"live — webhook failed"
-                    pending.append(_sweep_row( "tiktok", username, sub.id, True, None, False, room_id, detail, duration_ms, now))
-            else:
-                sub.is_live = False
-                _last_room_cache.pop("tt:" + username, None)
-                # NOTE: keep the cached client — offline is the hot path (24/25
-                # creators most sweeps). Evict+recreate every sweep churned
-                # httpx pools/SSL without close() and ratcheted RSS ~18MB/sweep
-                # to the 512MB ceiling. Warm reuse is faster too (no TLS redo).
-                await _close_open_sessions(session, sub.id, now)
-                detail = "offline" if err is None else f"error:{err}"
-                pending.append(_sweep_row( "tiktok", username, sub.id, False, err, False, room_id_val, detail, duration_ms, now))
-
-            await session.commit()
-            await asyncio.sleep(settings.PER_CHECK_SLEEP_SECONDS)
-
-    # One bulk flush for the whole sweep (1 session + 1 commit for 25 rows).
-    await _flush_sweep_logs(pending)
-    return {"checked": checked, "notified": notified}
+    _last_sweep_order = out["order"]
+    return {"checked": out["checked"], "notified": out["notified"]}
 
 async def poll_youtube():
     """Sweep YouTube rows: keyless /live parse + optional API confirm.
