@@ -6,13 +6,13 @@
 <title>{% block title %}PlaytopiaLive{% endblock %}</title>
 <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
 <link rel="stylesheet" href="/static/css/official.css?v=4">
-<link rel="stylesheet" href="/static/css/playtopia.css?v=7">
+<link rel="stylesheet" href="/static/css/playtopia.css?v=8">
 {% block head %}{% endblock %}
 </head>
 <body class="pt-body">
 <header class="pt-header">
   <div class="world-shell pt-header__inner">
-    <nav class="pt-nav" style="margin-left:0">
+    <nav class="pt-nav" aria-label="Dashboard sections">
       {% block nav %}{% endblock %}
     </nav>
     <div class="pt-userbox">{% block userbox %}{% endblock %}</div>

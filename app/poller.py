@@ -7,7 +7,7 @@ from sqlalchemy import select, text
 
 from .application.sweep import SweepConfig, run_platform_sweep
 from .config import get_settings
-from .domain.entities import SweepRecord, WebhookTarget
+from .domain.entities import WebhookTarget
 from .infrastructure.checkers.kick import checker as kick_checker
 from .infrastructure.checkers.tiktok import TikTokLivePort, TikTokProfilePort
 from .infrastructure.checkers.youtube import YouTubeLivePort
@@ -220,44 +220,6 @@ async def maintenance():
         now = datetime.now(timezone.utc)
         async with async_session() as session:
             await _maintenance_renames(session, now)
-            # Auto-heal stuck LIVE cards (user reported 7:00-9:30 still LIVE at 10:48)
-            # If a card has been LIVE for >3h, it's likely a stale reused client.
-            try:
-                stuck_cut = now - timedelta(hours=3)
-                res = await session.execute(
-                    select(Subscription).where(
-                        Subscription.is_live == True,  # noqa
-                        Subscription.last_live_at != None,  # noqa
-                        Subscription.last_live_at < stuck_cut,
-                    )
-                )
-                for sub in res.scalars().all():
-                    lc = sub.last_checked_at
-                    if lc is not None:
-                        if lc.tzinfo is None:
-                            lc = lc.replace(tzinfo=timezone.utc)
-                        if (now - lc).total_seconds() > 3600:
-                            continue  # not checked recently — let next sweep decide
-                    platform = sub.platform or "tiktok"
-                    handle = sub.tiktok_username
-                    sub_id = sub.id
-                    last_live = sub.last_live_at
-                    await SubscriptionRepo().mark_offline(sub_id, now)
-                    prefix = "tt:" if platform == "tiktok" else f"{platform}:"
-                    _last_room_cache.pop(prefix + handle, None)
-                    if platform == "tiktok":
-                        try:
-                            from .infrastructure.checkers.tiktok import checker as _tt2
-                            _tt2.drop(handle)
-                        except Exception:
-                            pass
-                    await SweepLogSink().flush([SweepRecord(
-                        platform, handle, sub_id, False, None, False, None,
-                        "auto-heal stuck LIVE -> offline", None, now)])
-                    logger.info(f"auto-heal stuck LIVE @{handle} last_live {last_live} -> offline")
-                await session.commit()
-            except Exception as e:
-                logger.debug(f"stuck heal skipped err={type(e).__name__}")
             # Retention: sweep_logs 2-day auto-delete (also pruned on boot in database.init_db)
             try:
                 cut2 = now - timedelta(days=2)

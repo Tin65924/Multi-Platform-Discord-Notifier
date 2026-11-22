@@ -139,3 +139,31 @@ def test_not_found_tracked_end_to_end(db, monkeypatch):
     assert (out["checked"], out["notified"]) == (1, 0)
     assert _sub("ghost_renamed")["first_nf"] is not None
     assert _logs("ghost_renamed")[0][1] == "not_found"
+
+
+def test_maintenance_preserves_long_running_stream(db, monkeypatch):
+    from datetime import timedelta
+    from sqlalchemy import select
+    from app.infrastructure.persistence.database import async_session
+    from app.infrastructure.persistence.models import Subscription
+    from app.infrastructure.checkers.tiktok import LiveInfo
+    from app.poller import maintenance
+
+    handle = "marathon"
+    _add_sub(handle)
+    status = {handle: LiveInfo(True, "marathon-room", handle)}
+    _, sent = _run_poll(monkeypatch, status)
+    assert len(sent) == 1
+
+    async def age_and_maintain():
+        async with async_session() as session:
+            sub = (await session.scalars(select(Subscription).where(
+                Subscription.tiktok_username == handle))).one()
+            sub.last_live_at = datetime.now(UTC) - timedelta(hours=8)
+            await session.commit()
+        await maintenance()
+
+    asyncio.run(age_and_maintain())
+    assert _sub(handle)["is_live"]
+    _, sent = _run_poll(monkeypatch, status)
+    assert sent == []

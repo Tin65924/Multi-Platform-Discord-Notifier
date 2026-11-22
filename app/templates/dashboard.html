@@ -16,15 +16,14 @@
 
 {% block content %}
 <div class="world-shell pt-section">
-  <p class="pt-kicker">DASHBOARD</p>
-  <h2 class="pt-h2">CHOOSE WHAT TO MANAGE</h2>
-  <p class="pt-lead">Creators, global Discord defaults, admins and audit — same page, tabbed like the Tools hub.</p>
+  <p class="pt-kicker">Playtopia Live</p>
+  <h1 class="workspace-title" id="workspaceTitle">Creators</h1>
 
   <!-- Creators (admin + superadmin) -->
   <section id="tab-creators" style="margin-top:1.5rem">
     <div class="grid2">
       <div class="card">
-        <h2>Platform</h2>
+        <h2><label for="platformSelect">Platform</label></h2>
         <p class="hint" id="platformBlurb">Pick where you track.</p>
         <select id="platformSelect" onchange="selectPlatform(this.value)">
           <option value="tiktok">TikTok</option>
@@ -37,7 +36,7 @@
         <h2 id="addTitle">Add TikTok creator</h2>
         <p class="hint" id="addHint">Paste a TikTok profile link or @username. Style it after adding.</p>
         <form id="addForm" style="display:flex; gap:10px">
-          <input id="tiktokInput" placeholder="https://www.tiktok.com/@username or @username" required>
+          <input id="tiktokInput" aria-label="Creator handle or profile URL" placeholder="https://www.tiktok.com/@username or @username" required>
           <button class="btn btn-gold">Add</button>
         </form>
         <div id="addMsg" class="msg"></div>
@@ -58,7 +57,7 @@
         <span class="hint" style="margin:0">Paused = no Discord posts. Detection + analytics keep running.</span>
       </div>
       <p class="hint">Used for every creator unless that creator overrides it. Channel: Discord &rarr; Integrations &rarr; Webhooks &rarr; Copy URL.</p>
-      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px; align-items:start">
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap:16px; align-items:start">
         <div style="display:grid; gap:12px">
           <input id="webhook" placeholder="https://discord.com/api/webhooks/...">
           <div class="grid2">
@@ -256,7 +255,7 @@ async function api(path, opts={}, _retried=false) {
   } catch (e) {
     // Transient blip (e.g. Render redeploy rotated the backend IP):
     // retry once on a fresh connection before giving up.
-    if (!_retried) {
+    if (!_retried && ['GET', 'HEAD'].includes((opts.method || 'GET').toUpperCase())) {
       await new Promise(res => setTimeout(res, 1200));
       return api(path, opts, true);
     }
@@ -267,6 +266,9 @@ async function api(path, opts={}, _retried=false) {
   return r;
 }
 function showTab(name) {
+  const selected = document.querySelector('[data-tab="' + name + '"]');
+  document.getElementById('workspaceTitle').textContent = selected.textContent;
+  clearInterval(SCHED_TICK);
   ['creators','webhook','admins','audit','send','analytics','logs','schedule'].forEach(t => {
     const sec = document.getElementById('tab-'+t);
     if (sec) sec.classList.toggle('hidden', t !== name);
@@ -322,7 +324,8 @@ const PLATFORMS = {
     hint: 'Paste a Kick channel link or username. Needs the Kick API keys in .env, then checked every sweep.',
     placeholder: 'https://kick.com/username or username' },
 };
-let PLATFORM = localStorage.getItem('pt_platform') || 'tiktok';
+let PLATFORM = 'tiktok';
+try { PLATFORM = localStorage.getItem('pt_platform') || PLATFORM; } catch {}
 if (!PLATFORMS[PLATFORM]) PLATFORM = 'tiktok';
 let ALL_SUBS = [];
 // Which platforms the backend actually live-checks (from /api/settings).
@@ -351,7 +354,7 @@ function dispHandle(s) {
   return '@' + s.tiktok_username;
 }
 function selectPlatform(p) {
-  if (!PLATFORMS[p]) p = 'tiktok';
+  if (!Object.hasOwn(PLATFORMS, p)) p = 'tiktok';
   PLATFORM = p;
   try { localStorage.setItem('pt_platform', p); } catch {}
   document.getElementById('platformSelect').value = p;
@@ -363,6 +366,7 @@ function selectPlatform(p) {
 }
 async function loadSubs() {
   const r = await api('/api/subscriptions');
+  if (!r.ok) { toast("Could not refresh creators.", "err"); return; }
   ALL_SUBS = await r.json();
   // Counts per platform in the filter dropdown.
   const counts = {};
@@ -1103,7 +1107,9 @@ function renderSchedule() {
 async function loadSchedule() {
   const r = await api('/api/schedule');
   if (!r.ok) { toast(await r.text(), 'err'); return; }
-  SCHED = await r.json();
+  const schedule = await r.json();
+  if (document.getElementById("tab-schedule").classList.contains("hidden")) return;
+  SCHED = schedule;
   renderSchedule();
   if (SCHED_TICK) clearInterval(SCHED_TICK);
   SCHED_TICK = setInterval(renderSchedule, 1000);
