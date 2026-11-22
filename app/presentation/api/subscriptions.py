@@ -312,12 +312,22 @@ async def send_test_upload(sub_id: int, session: AsyncSession = Depends(get_sess
                 response = await uploads.post_upload(client, url, {
                     "content": f"Testing upload\n{link}", "allowed_mentions": {"parse": []},
                 })
-            except httpx.RequestError:
-                raise HTTPException(502, "Discord delivery is uncertain. Check the upload channel before retrying.")
+            except httpx.RequestError as exc:
+                target = "Cloudflare relay" if settings.RELAY_URL else "Discord"
+                logger.warning("upload test sub=%d target=%s error=%s", sub_id, target, type(exc).__name__)
+                raise HTTPException(502, f"No delivery confirmation from {target} ({type(exc).__name__}). Check the upload channel before retrying.")
             if not response.is_success:
+                code = response.status_code
+                target = "Cloudflare relay" if settings.RELAY_URL else "Discord"
+                logger.warning("upload test sub=%d target=%s upstream_status=%d", sub_id, target, code)
+                # Only recognize fixed messages issued by our Worker. Never expose arbitrary upstream bodies.
+                if settings.RELAY_URL and code == 503 and response.text == "Webhook routing not configured":
+                    raise HTTPException(502, "Cloudflare did not send the post. Check the Worker secrets DISCORD_WEBHOOK_URL and DISCORD_UPLOAD_WEBHOOK_URL: both must be full Discord webhook URLs with different webhook IDs.")
+                if settings.RELAY_URL and code == 403 and response.text == "Forbidden":
+                    raise HTTPException(502, "Cloudflare refused the relay request. Verify the deployed Worker code and that RELAY_SECRET matches Render.")
                 if response.is_server_error:
-                    raise HTTPException(502, "Discord delivery is uncertain. Check the upload channel before retrying.")
-                raise HTTPException(502, f"Discord rejected the upload test (HTTP {response.status_code}).")
+                    raise HTTPException(502, f"{target} returned HTTP {code}. Delivery is uncertain. Check the upload channel before retrying.")
+                raise HTTPException(502, f"{target} returned HTTP {code} for the upload test.")
         await log_audit(user["username"], "upload.test", f"@{handle} video {vid}")
         return {"msg": f"Test upload sent for @{handle}.", "video_url": link}
     finally:
