@@ -271,7 +271,7 @@ def test_creator_tracking_preferences(pilot, monkeypatch):
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("case", ["ok", "empty", "blocked", "timeout"])
+@pytest.mark.parametrize("case", ["ok", "empty", "blocked", "timeout", "configuration", "upstream"])
 def test_manual_upload_uses_separate_destination_and_preserves_history(pilot, monkeypatch, case, upload_payload):
     from fastapi import HTTPException
     from unittest.mock import AsyncMock
@@ -287,6 +287,10 @@ def test_manual_upload_uses_separate_destination_and_preserves_history(pilot, mo
             return html("__FRONTITY_CONNECT_STATE__", profile(ids))
         assert request.url.params["wait"] == "true"
         sends.append(upload_payload(request))
+        if case == "configuration":
+            return httpx.Response(503, text="Webhook routing not configured")
+        if case == "upstream":
+            return httpx.Response(502, text="private upstream information")
         if case == "timeout":
             raise httpx.ReadTimeout("lost response")
         return httpx.Response(200)
@@ -304,10 +308,16 @@ def test_manual_upload_uses_separate_destination_and_preserves_history(pilot, mo
                 with pytest.raises(HTTPException) as exc:
                     await call
                 assert exc.value.status_code == (404 if case == "empty" else 502)
+                if case == "configuration" and u.settings.RELAY_URL:
+                    assert "DISCORD_UPLOAD_WEBHOOK_URL" in exc.value.detail
+                if case == "upstream":
+                    assert "HTTP 502" in exc.value.detail and "private" not in exc.value.detail
+                if case == "timeout":
+                    assert "ReadTimeout" in exc.value.detail
         assert 1 not in routes._upload_tests_in_progress
         async with pilot() as db:
             assert await db.scalar(select(u.Subscription.upload_checkpoint)) is None
             assert await db.scalar(select(u.UploadNotice.video_id)) is None
     asyncio.run(run())
     expected = {"content": f"Testing upload\n{u.ROOT}/@{HANDLE}/video/{NEW}", "allowed_mentions": {"parse": []}}
-    assert sends == ([expected] if case in ("ok", "timeout") else [])
+    assert sends == ([expected] if case in ("ok", "timeout", "configuration", "upstream") else [])
