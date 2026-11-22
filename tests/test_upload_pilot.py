@@ -1,0 +1,221 @@
+import asyncio
+import json
+from collections import Counter
+from types import SimpleNamespace
+
+import httpx
+import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from app import uploads as u
+
+HANDLE = "pilot"
+OLD = "7000000000000000001"
+NEW = "7000000000000000002"
+PIN = "7000000000000000003"
+HOOK = "https://discord.com/api/webhooks/22/test-token"
+
+
+def profile(ids, owner="123"):
+    return {"source": {"data": {"/embed/@pilot": {
+        "isReady": True, "isError": False,
+        "userInfo": {"privateAccount": False, "uniqueId": HANDLE, "id": owner},
+        "videoList": [{"id": v, "authorUniqueId": HANDLE, "privateItem": False} for v in ids],
+    }}}}
+
+
+def video(vid, at):
+    return {"__DEFAULT_SCOPE__": {"webapp.video-detail": {"itemInfo": {"itemStruct": {
+        "id": vid, "author": {"uniqueId": HANDLE, "id": "123"}, "createTime": at,
+    }}}}}
+
+
+def html(script, state):
+    return httpx.Response(200, text=f'<script id="{script}" type="application/json">{json.dumps(state)}</script>')
+
+
+@pytest.fixture
+def pilot(tmp_path, monkeypatch):
+    from app.infrastructure.persistence.database import Base
+    engine = create_async_engine("sqlite+aiosqlite:///" + (tmp_path / "pilot.db").as_posix())
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    monkeypatch.setattr(u, "async_session", factory)
+    monkeypatch.setattr(u.settings, "TIKTOK_UPLOAD_WEBHOOK_URL", HOOK)
+    monkeypatch.setattr(u.settings, "DASHBOARD_WEBHOOK_URL", "https://discord.com/api/webhooks/11/live")
+    monkeypatch.setattr(u.settings, "RELAY_URL", "")
+    async def setup():
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        async with factory.begin() as db:
+            db.add(u.Subscription(id=1, platform="tiktok", tiktok_username=HANDLE))
+        await engine.dispose()
+    asyncio.run(setup())
+    yield factory
+    asyncio.run(engine.dispose())
+
+
+@pytest.mark.parametrize("outcome", ["ok", "timeout", "429"])
+def test_full_flow(pilot, monkeypatch, outcome):
+    now = [1000]
+    monkeypatch.setattr(u, "time", SimpleNamespace(time=lambda: now[0]))
+    ids = [OLD]
+    sends = []
+    dates = {PIN: 100, NEW: 1050}
+    def transport(req):
+        if req.method == "POST":
+            assert str(req.url).split("?")[0] == HOOK
+            assert json.loads(req.content)["allowed_mentions"] == {"parse": []}
+            sends.append(req)
+            if outcome == "timeout":
+                raise httpx.ReadTimeout("lost response")
+            return httpx.Response(429 if outcome == "429" else 200)
+        if "/embed/" in req.url.path:
+            return html("__FRONTITY_CONNECT_STATE__", profile(ids))
+        vid = req.url.path.split("/")[-1]
+        return html("__UNIVERSAL_DATA_FOR_REHYDRATION__", video(vid, dates[vid]))
+    async def run():
+        counts = Counter()
+        # New HTTP clients simulate worker restarts; the database persists.
+        for delta, visible in [(0,[OLD]), (100,[PIN,NEW,NEW,OLD]), (200,[OLD]), (300,[NEW,OLD,PIN])]:
+            ids[:] = visible
+            now[0] = 1000 + delta
+            async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as c:
+                await u.check(c, 1, HANDLE, "deliver", counts)
+        assert len(sends) == 1
+        async with pilot() as db:
+            rows = (await db.scalars(select(u.UploadNotice))).all()
+            assert [(r.video_id,r.status) for r in rows] == [(NEW, {"ok":"sent","429":"rejected","timeout":"uncertain"}[outcome])]
+    asyncio.run(run())
+
+
+def test_observation_and_parallel_claim(pilot):
+    async def run():
+        calls = []
+        def accept(req):
+            calls.append(req)
+            return httpx.Response(200)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(accept)) as c:
+            now = int(u.time.time())
+            assert await u.notice(c, 1, HANDLE, OLD, now, "observe") == "observed"
+            assert await u.notice(c, 1, HANDLE, OLD, now, "deliver") == "duplicate"
+            outcomes = await asyncio.gather(*(u.notice(c, 1, HANDLE, NEW, now, "deliver") for _ in range(25)))
+            assert Counter(outcomes) == {"sent":1,"duplicate":24}
+            assert len(calls) == 1
+    asyncio.run(run())
+
+
+def test_rebaseline_and_monotonic_checkpoint(pilot):
+    async def run():
+        change = u.advance
+        assert await change(1,HANDLE,"a",[OLD],1000,"observe") is None
+        assert await change(1,HANDLE,"a",[NEW],900,"observe") is None
+        assert await change(1,HANDLE,"a",[NEW],1100,"observe") == (1000,[NEW])
+        assert await change(1,HANDLE,"b",[NEW],1200,"observe") is None
+        assert await change(1,HANDLE,"b",[OLD],1300,"deliver") is None
+        assert await change(1,HANDLE,"b",[PIN],2400,"deliver") is None
+    asyncio.run(run())
+
+
+def test_destination_isolation(pilot, monkeypatch):
+    gs = SimpleNamespace(notifications_enabled=True, webhook_url="https://discordapp.com/api/webhooks/22/other")
+    assert u.destination(gs) is None
+    gs.webhook_url = ""
+    gs.notifications_enabled = False
+    assert u.destination(gs) is None
+    gs.notifications_enabled = True
+    monkeypatch.setattr(u.settings, "RELAY_URL", "https://example.test/live")
+    assert u.destination(gs) is None
+
+
+def test_unusable_pages_preserve_checkpoint(pilot):
+    async def run():
+        counts = Counter()
+        bad = profile([OLD])
+        bad["source"]["data"]["/embed/@pilot"]["videoList"][0]["authorUniqueId"] = "other"
+        for reply in [httpx.Response(403), httpx.Response(200,text="challenge"),
+                      html("__FRONTITY_CONNECT_STATE__",bad), httpx.Response(200,content=b"x"*(u.MAX_BYTES+1))]:
+            async with httpx.AsyncClient(transport=httpx.MockTransport(lambda req: reply)) as c:
+                await u.check(c, 1, HANDLE, "deliver", counts)
+        assert counts == {"feed_unverified":4}
+        async with pilot() as db:
+            assert await db.scalar(select(u.Subscription.upload_checkpoint)) is None
+    asyncio.run(run())
+
+
+
+def test_accelerated_upload_soak(pilot, monkeypatch):
+    """Override UPLOAD_SOAK_CHECKS for a longer offline run using the real checkpoint."""
+    import gc
+    import os
+    from tools.memory_soak import current_rss_mb
+
+    runs = int(os.getenv("UPLOAD_SOAK_CHECKS", "50"))
+    assert 1 <= runs <= 100000
+    clock = [2000000000]
+    monkeypatch.setattr(u, "time", SimpleNamespace(time=lambda: clock[0]))
+    current = [OLD]
+    posted = {}
+    sends = []
+
+    def serve(request):
+        if request.method == "POST":
+            sends.append(json.loads(request.content)["content"].split("/")[-1])
+            return httpx.Response(204)
+        if "/embed/" in request.url.path:
+            return html("__FRONTITY_CONNECT_STATE__", profile(current))
+        vid = request.url.path.split("/")[-1]
+        return html("__UNIVERSAL_DATA_FOR_REHYDRATION__", video(vid, posted.get(vid, 100)))
+
+    async def run():
+        counts = Counter()
+        samples = []
+        async with httpx.AsyncClient(transport=httpx.MockTransport(serve)) as client:
+            for i in range(runs):
+                clock[0] += 300
+                if i and i % 10 == 0:
+                    vid = str(int(NEW) + i)
+                    posted[vid] = clock[0] - 10
+                current[:] = [OLD] + list(posted)[-5:]
+                if i % 2:
+                    current.reverse()
+                    current.append(PIN)
+                await u.check(client, 1, HANDLE, "deliver", counts)
+                if i == 49 or i == runs - 1:
+                    gc.collect()
+                    samples.append(current_rss_mb())
+        assert sends == list(posted)
+        async with pilot() as db:
+            persisted = (await db.scalars(select(u.UploadNotice.video_id))).all()
+            assert set(persisted) == set(sends)
+        print("upload soak:", runs, "checks;", len(sends), "distinct posts; RSS MiB:", samples)
+    asyncio.run(run())
+
+
+def test_missing_date_or_changed_author_never_sends(pilot):
+    async def run():
+        await u.advance(1, HANDLE, "123", [OLD], int(u.time.time()) - 20, "deliver")
+        def serve(req):
+            assert req.method == "GET"
+            if "/embed/" in req.url.path:
+                return html("__FRONTITY_CONNECT_STATE__", profile([NEW, PIN]))
+            if req.url.path.endswith(NEW):
+                return httpx.Response(200, text="no metadata")
+            data = video(PIN, int(u.time.time()) - 1)
+            data["__DEFAULT_SCOPE__"]["webapp.video-detail"]["itemInfo"]["itemStruct"]["author"]["id"] = "999"
+            return html("__UNIVERSAL_DATA_FOR_REHYDRATION__", data)
+        counts = Counter()
+        async with httpx.AsyncClient(transport=httpx.MockTransport(serve)) as client:
+            await u.check(client, 1, HANDLE, "deliver", counts)
+        assert counts["date_unverified"] == 2
+    asyncio.run(run())
+
+def test_anchored_creator_cannot_be_replaced(pilot):
+    async def run():
+        async with pilot.begin() as db:
+            sub = await db.get(u.Subscription, 1)
+            sub.tiktok_user_id = "original"
+        await u.advance(1, HANDLE, "someone-else", [NEW], 1100, "deliver")
+        async with pilot() as db:
+            assert await db.scalar(select(u.Subscription.upload_checkpoint)) is None
+    asyncio.run(run())

@@ -11,6 +11,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .logging_config import setup_logging
 from .config import get_settings
+from .uploads import upload_loop
 from .infrastructure.persistence.database import init_db, engine
 from .infrastructure.checkers.tiktok import checker as tiktok_checker, close_profile_client
 from .infrastructure.checkers.youtube import checker as youtube_checker
@@ -47,16 +48,19 @@ async def _warm_cookies():
 async def lifespan(app: FastAPI):
     global poll_task
     warm_task = None
+    upload_task = None
     try:
         await init_db()
         tiktok_checker.start()
         if (getattr(settings, "TT_COOKIE_PROVIDER", "off") or "off").lower() != "off":
             warm_task = asyncio.create_task(_warm_cookies())
         poll_task = asyncio.create_task(poll_loop())
+        if settings.TIKTOK_UPLOAD_MODE != "off":
+            upload_task = asyncio.create_task(upload_loop())
         logger.info("app started, poller running")
         yield
     finally:
-        tasks = [task for task in (poll_task, warm_task) if task is not None]
+        tasks = [task for task in (poll_task, warm_task, upload_task) if task is not None]
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)

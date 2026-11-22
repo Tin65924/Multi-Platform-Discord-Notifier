@@ -1,6 +1,7 @@
 import os
 import secrets
 from functools import lru_cache
+from typing import Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -30,6 +31,8 @@ class Settings(BaseSettings):
     # Optional TikTok login session (browser cookie "sessionid" from tiktok.com).
     # Logged-in calls are flagged far less and can read age-restricted lives.
     # Treat like a password: .env only, never commit, never share.
+    TIKTOK_UPLOAD_MODE: Literal["off", "observe", "deliver"] = "observe"
+    TIKTOK_UPLOAD_WEBHOOK_URL: str = ""
     TIKTOK_SESSION_ID: str = ""
     # Automatic cookie minting via headless browser (hourly). Needs Playwright
     # browsers installed — default OFF here (Render has none); "on" for local.

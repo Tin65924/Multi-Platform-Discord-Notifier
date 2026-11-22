@@ -154,6 +154,7 @@ async def open_session(retries: int = 1) -> AsyncSession:
 
 # Desired-state columns for pre-existing DBs (create_all only covers fresh DBs).
 _SUBSCRIPTION_COLS_COMMON = (
+    ("upload_checkpoint", "TEXT"),
     ("display_name", "VARCHAR(128)"),
     ("avatar_url", "TEXT"),
     ("cover_url", "TEXT"),
