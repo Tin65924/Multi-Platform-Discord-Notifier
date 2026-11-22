@@ -55,7 +55,7 @@ async def run_platform_sweep(
     *,
     checker: LiveChecker,
     repo: SubscriptionRepo,
-    sessions,  # SessionRepo-like: ensure_open/close_open (port lands fully in Phase 4)
+    sessions,
     sink: SweepLogSink,
     notifier: Notifier,
     profiles: ProfileLookup | None,
@@ -107,7 +107,6 @@ async def run_platform_sweep(
 
         if result.outcome == CheckOutcome.NOT_FOUND:
             await repo.mark_not_found(card.id, now)
-            await sessions.close_open(card.id, now)
             room_cache.pop(cfg.cache_prefix + username, None)
             pending.append(SweepRecord(cfg.platform, username, card.id, False,
                                        "not_found", False, result.room_id,
@@ -115,7 +114,7 @@ async def run_platform_sweep(
             await asyncio.sleep(cfg.per_check_sleep)
             continue
 
-        if result.outcome in (CheckOutcome.LIVE, CheckOutcome.OFFLINE):
+        if card.first_not_found_at is not None and result.outcome in (CheckOutcome.LIVE, CheckOutcome.OFFLINE):
             await repo.clear_not_found(card.id)  # clean read clears the streak
 
         if result.outcome == CheckOutcome.INCONCLUSIVE:
@@ -137,7 +136,6 @@ async def run_platform_sweep(
                 if verdict.cache_room:
                     room_cache[cfg.cache_prefix + username] = room_id
                 await repo.mark_seen_live(card.id, cfg.platform, username, room_id, now)
-                await sessions.ensure_open(card.id, cfg.platform, username, room_id, now)
                 pending.append(SweepRecord(cfg.platform, username, card.id, True, None,
                                            False, room_id, verdict.detail, duration_ms, now))
                 await asyncio.sleep(cfg.per_check_sleep)
@@ -180,7 +178,6 @@ async def run_platform_sweep(
                                            False, room_id, detail, duration_ms, now))
         else:  # OFFLINE
             await repo.mark_offline(card.id, now)
-            await sessions.close_open(card.id, now)
             room_cache.pop(cfg.cache_prefix + username, None)
             # NOTE: warm client reuse — no evict on the hot path (OOM fix, kept).
             detail = "offline" if result.reason is None else f"error:{result.reason}"

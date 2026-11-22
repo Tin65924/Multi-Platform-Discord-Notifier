@@ -7,7 +7,8 @@ matches the legacy poller: one short session per method.
 import logging
 from datetime import datetime
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
+from sqlalchemy.orm import load_only
 
 from ...domain.entities import Creator, CreatorCard, SessionState, SweepRecord, WebhookTarget
 from .database import async_session
@@ -86,7 +87,11 @@ class SubscriptionRepo:
                 # NULL counts as tiktok so pre-platform rows keep polling.
                 conds.append(Subscription.platform.is_(None))
             result = await session.execute(
-                select(Subscription).where(
+                select(Subscription).options(load_only(
+                    Subscription.id, Subscription.tiktok_username, Subscription.platform,
+                    Subscription.is_live, Subscription.last_live_at, Subscription.last_room_id,
+                    Subscription.last_notified_at, Subscription.first_not_found_at,
+                )).where(
                     Subscription.enabled == True,  # noqa
                     or_(*conds),
                 )
@@ -100,12 +105,13 @@ class SubscriptionRepo:
 
     async def check_in(self, sub_id: int, at: datetime) -> CreatorCard | None:
         async with async_session() as session:
-            sub = await session.get(Subscription, sub_id)
-            if sub is None:
-                return None  # removed mid-sweep
-            sub.last_checked_at = at
+            result = await session.scalars(
+                update(Subscription).where(Subscription.id == sub_id)
+                .values(last_checked_at=at).returning(Subscription)
+            )
+            sub = result.one_or_none()
             await session.commit()
-            return card_of(sub)
+            return card_of(sub) if sub is not None else None
 
     async def mark_not_found(self, sub_id: int, at: datetime) -> None:
         async with async_session() as session:
