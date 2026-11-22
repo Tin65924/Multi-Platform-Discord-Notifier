@@ -117,6 +117,9 @@ class GlobalSettingsIn(BaseModel):
     @classmethod
     def validate_webhook(cls, v: str) -> str:
         v = v.strip()
+        from .config import get_settings
+        if not v and get_settings().RELAY_URL and get_settings().RELAY_SECRET:
+            return v
         if not DISCORD_WEBHOOK_RE.match(v):
             raise ValueError("Invalid Discord webhook URL. Discord → Channel → Integrations → Webhooks → Copy URL")
         return v

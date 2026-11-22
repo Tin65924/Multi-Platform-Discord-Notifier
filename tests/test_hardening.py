@@ -60,3 +60,23 @@ def test_client_ip_prefers_forwarded_for():
 
     assert _client_ip(Req({"x-forwarded-for": "1.2.3.4, 5.6.7.8"}, "9.9.9.9")) == "1.2.3.4"
     assert _client_ip(Req({}, "9.9.9.9")) == "9.9.9.9"
+
+
+def test_livestream_relay_needs_no_render_discord_url(monkeypatch):
+    import asyncio
+    import json
+    import httpx
+    from app.infrastructure.notify import discord
+
+    monkeypatch.setattr(discord._settings, "RELAY_URL", "https://relay.example.test")
+    monkeypatch.setattr(discord._settings, "RELAY_SECRET", "shared")
+    monkeypatch.setattr(discord, "_backoff_until", 0)
+    payload = {"content": "live"}
+    def serve(req):
+        assert req.url.host == "relay.example.test"
+        assert req.url.params["with_components"] == "true"
+        assert json.loads(req.content) == {"kind": "live", "secret": "shared", "payload": payload}
+        return httpx.Response(204)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(serve))
+    monkeypatch.setattr(discord.httpx, "AsyncClient", lambda **kwargs: client)
+    assert asyncio.run(discord.send_webhook(None, payload))

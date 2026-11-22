@@ -9,11 +9,12 @@
  *   2. Paste this file as the Worker code -> Deploy
  *   3. Worker -> Settings -> Variables & Secrets -> add secrets:
  *        DISCORD_WEBHOOK_URL = https://discord.com/api/webhooks/ID/TOKEN
+ *        DISCORD_UPLOAD_WEBHOOK_URL = a separate webhook for uploads
  *        RELAY_SECRET        = any long random string
  *   4. Copy the Worker URL (https://xxx.workers.dev) plus RELAY_SECRET into
  *      the app's env as RELAY_URL / RELAY_SECRET.
  *
- * Protocol: app POSTs JSON {secret, payload} to the Worker URL.
+ * Legacy {secret, payload} means live. Uploads require Bearer auth + kind=upload.
  * Query params (?with_components=true) are forwarded to Discord untouched.
  * Discord's status code, body, and retry-after header pass straight through.
  */
@@ -44,25 +45,33 @@ export default {
     } catch {
       return new Response("Bad Request", { status: 400 });
     }
-    const got = String(body.secret ?? "").trim();
+    if (!body || typeof body !== "object") return new Response("Bad Request", { status: 400 });
+    const kind = body.kind === undefined ? "live" : body.kind;
+    if (kind !== "live" && kind !== "upload") return new Response("Unknown route", { status: 400 });
+    const got = kind === "upload"
+      ? (request.headers.get("Authorization") || "").match(/^Bearer (.+)$/)?.[1] || ""
+      : String(body.secret ?? "").trim();
     const want = String(env.RELAY_SECRET ?? "").trim();
     if (!want || !(await secretsEqual(got, want))) {
       return new Response("Forbidden", { status: 403 });
     }
-    if (!env.DISCORD_WEBHOOK_URL || !env.DISCORD_WEBHOOK_URL.includes("discord.com/api/webhooks")) {
-      return new Response("Relay not configured", { status: 500 });
+    const webhook = /^https:\/\/(?:discord\.com|discordapp\.com)\/api\/webhooks\/([1-9]\d*)\/[A-Za-z0-9_-]+$/;
+    const live = webhook.exec(env.DISCORD_WEBHOOK_URL || "");
+    const upload = webhook.exec(env.DISCORD_UPLOAD_WEBHOOK_URL || "");
+    if (!live || (kind === "upload" && (!upload || upload[1] === live[1]))) {
+      return new Response("Webhook routing not configured", { status: 503 });
     }
-
-    const target = new URL(env.DISCORD_WEBHOOK_URL);
-    const incoming = new URL(request.url);
-    incoming.searchParams.forEach((v, k) => {
-      if (k !== "secret") target.searchParams.set(k, v);
-    });
+    const target = new URL(kind === "upload" ? upload[0] : live[0]);
+    const query = new URL(request.url).searchParams;
+    for (const key of ["wait", "with_components"]) {
+      if (query.get(key) === "true") target.searchParams.set(key, "true");
+    }
 
     let upstream;
     try {
       upstream = await fetch(target.toString(), {
         method: "POST",
+        redirect: "error",
         headers: {
           "Content-Type": "application/json",
           "User-Agent": "PlaytopiaLiveNotifier/1.0",
@@ -73,7 +82,7 @@ export default {
       return new Response("Upstream fetch failed", { status: 502 });
     }
 
-    const respBody = await upstream.text();
+    const respBody = upstream.status === 204 ? null : await upstream.text();
     const out = new Response(respBody, { status: upstream.status });
     const ra = upstream.headers.get("retry-after");
     if (ra) out.headers.set("retry-after", ra);

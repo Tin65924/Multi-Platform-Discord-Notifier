@@ -11,7 +11,7 @@ from .domain.entities import WebhookTarget
 from .infrastructure.checkers.kick import checker as kick_checker
 from .infrastructure.checkers.tiktok import TikTokLivePort, TikTokProfilePort
 from .infrastructure.checkers.youtube import YouTubeLivePort
-from .infrastructure.notify.discord import resolve_webhook_cfg
+from .infrastructure.notify.discord import resolve_webhook_cfg, live_destination_ready
 from .infrastructure.persistence.database import async_session, open_session
 from .infrastructure.persistence.models import GlobalSettings, Subscription
 from .infrastructure.persistence.repos import (
@@ -111,7 +111,7 @@ async def poll_once():
         notify_on = await notifications_enabled(session)
 
     cfg = await get_global_settings()
-    if not cfg[0]:
+    if not live_destination_ready(cfg[0]):
         logger.warning("poll skipped: no webhook configured in DB or env")
         return {"checked": 0, "notified": 0, "error": "no webhook"}
     return await _run_sweep("tiktok", "tt:", TikTokLivePort(), TikTokProfilePort(),
@@ -123,7 +123,7 @@ async def poll_youtube():
         notify_on = await notifications_enabled(session)
 
     cfg = await get_global_settings()
-    if not cfg[0]:
+    if not live_destination_ready(cfg[0]):
         logger.warning("youtube poll skipped: no webhook configured in DB or env")
         return {"checked": 0, "notified": 0, "error": "no webhook"}
     return await _run_sweep("youtube", "yt:",
@@ -145,7 +145,7 @@ async def poll_kick():
         notify_on = await notifications_enabled(session)
 
     cfg = await get_global_settings()
-    if not cfg[0]:
+    if not live_destination_ready(cfg[0]):
         logger.warning("kick poll skipped: no webhook configured in DB or env")
         return {"checked": 0, "notified": 0, "error": "no webhook"}
     return await _run_sweep("kick", "kk:",

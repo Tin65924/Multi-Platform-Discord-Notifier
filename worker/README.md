@@ -1,28 +1,15 @@
-# Discord Relay Worker (free, ~2 minutes)
+# Discord relay setup
 
-Forwards our Discord webhook posts through Cloudflare's network so a
-flagged host IP can't 429 them.
+Update the existing Worker under **Cloudflare Dashboard → Workers & Pages → your relay → Edit code**. Deploy the module in [relay.js](relay.js). In **Settings → Variables and Secrets** set these as secrets and deploy the changes:
 
-## Deploy
+| Cloudflare secret | Value |
+| --- | --- |
+| `DISCORD_WEBHOOK_URL` | Existing livestream Discord webhook URL |
+| `DISCORD_UPLOAD_WEBHOOK_URL` | A separate Discord webhook created in the uploads channel |
+| `RELAY_SECRET` | A long random shared secret. Keep the existing value when upgrading. |
 
-1. https://dash.cloudflare.com → **Workers & Pages** → **Create Worker**
-2. Replace the default code with `relay.js` → **Deploy**
-3. Worker → **Settings** → **Variables & Secrets** → add **secrets**:
-   - `DISCORD_WEBHOOK_URL` = your full Discord webhook URL
-   - `RELAY_SECRET` = a long random string (e.g. `openssl rand -hex 32`)
-4. Copy the Worker URL (`https://xxx.workers.dev`)
+On the **Render web service → Environment**, set `RELAY_URL` to the HTTPS Worker URL and `RELAY_SECRET` to the identical shared secret. Deploy the updated Render app. In relay mode neither Discord URL is required on Render. For automatic uploads use the default `TIKTOK_UPLOAD_MODE=deliver` and enable Uploads for the creator. The global notification pause also applies to Test upload.
 
-## Point the app at it
+Deploy the Worker first. Existing app versions send livestreams through the updated Worker. The new app's upload requests are rejected by an old Worker, preventing a test or upload from landing in the livestream channel during rollout.
 
-Render (or `.env`):
-
-- `RELAY_URL` = the Worker URL from step 4
-- `RELAY_SECRET` = same value as step 3
-
-Leave both empty to send to Discord directly (old behavior).
-
-## Verify
-
-Watch the app logs on the next live detection: a `204` means Discord
-accepted the relayed post. A `403` means `RELAY_SECRET` mismatches; a
-`500` means the Worker's `DISCORD_WEBHOOK_URL` secret is missing.
+Verify with **Creators → TikTok → Test upload**; expect “Testing upload” and the video link in the uploads channel. The next livestream should appear in the livestream channel. A 403 from the relay can indicate mismatched shared secrets or an old Worker; 503 can indicate invalid, missing or identical webhook destinations.

@@ -1,12 +1,12 @@
 """Settings + broadcast + wildlines routes."""
-from fastapi import APIRouter, Depends, HTTPException, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...infrastructure.persistence.database import get_session
 from ...infrastructure.persistence.models import GlobalSettings
 from ...schemas import GlobalSettingsIn
 from ...security import require_admin, require_superadmin, log_audit
-from ...infrastructure.notify.discord import send_webhook
+from ...infrastructure.notify.discord import send_webhook, live_destination_ready
 from ...infrastructure.notify.wildlines import WILD_LINES
 from .common import _webhook_cfg, settings
 
@@ -17,7 +17,8 @@ async def get_settings_api(session: AsyncSession = Depends(get_session), user=De
     gs = await session.get(GlobalSettings, 1)
     url, ping, msg, everyone, image, color = _webhook_cfg(gs)
     return {
-        "webhook_configured": bool(url),
+        "webhook_configured": live_destination_ready(url),
+        "live_relay": bool(settings.RELAY_URL),
         "webhook_url_masked": ("***REDACTED***" + url[-12:] if url else None),
         "raw_webhook_url": url,
         "ping_role_id": ping,
@@ -40,7 +41,7 @@ async def get_settings_api(session: AsyncSession = Depends(get_session), user=De
 @router.put("/settings")
 async def put_settings(payload: GlobalSettingsIn, session: AsyncSession = Depends(get_session), user=Depends(require_admin)):
     upload_url = settings.TIKTOK_UPLOAD_WEBHOOK_URL
-    if upload_url and payload.webhook_url.split("/")[-2:-1] == upload_url.split("/")[-2:-1]:
+    if not settings.RELAY_URL and upload_url and payload.webhook_url.split("/")[-2:-1] == upload_url.split("/")[-2:-1]:
         raise HTTPException(400, "Livestream and TikTok upload webhooks must be different.")
     gs = await session.get(GlobalSettings, 1)
     if not gs:
@@ -75,7 +76,7 @@ async def send_custom(request: Request, session: AsyncSession = Depends(get_sess
         raise HTTPException(400, "Message too long (2000 chars max)")
     gs = await session.get(GlobalSettings, 1)
     webhook_url = _webhook_cfg(gs)[0]
-    if not webhook_url:
+    if not live_destination_ready(webhook_url):
         raise HTTPException(400, "Configure webhook first (Defaults tab)")
     payload = {
         "username": "Forest Watcher",
