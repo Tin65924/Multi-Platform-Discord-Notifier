@@ -70,38 +70,44 @@ async def poll_loop():
     if _is_running:
         return
     _is_running = True
-    logger.info(f"poller started interval={settings.CHECK_INTERVAL_SECONDS}s local comfort")
-    # first next estimate so schedule page has data before first sweep finishes
-    state.next_sweep_at = datetime.now(timezone.utc) + timedelta(seconds=settings.CHECK_INTERVAL_SECONDS)
-    while True:
-        try:
-            # Bound the dedup cache: keys are per-creator, but never evicted.
-            if len(_last_room_cache) > 500:
-                _last_room_cache.clear()
-            state.sweep_in_progress = True
-            state.last_sweep_at = datetime.now(timezone.utc)
-            result, yt, kk = await poll_cycle()
-            await maintenance()  # rename attempts + avatar refreshes (bounded, best-effort)
-            peak = rss_mb()
-            cur = rss_current_mb()
-            logger.info(
-                f"poll sweep checked={result['checked']}+{yt['checked']}+{kk['checked']} "
-                f"notified={result['notified']}+{yt['notified']}+{kk['notified']} "
-                f"rss={peak}MB cur={cur}MB"
-            )
-            if should_recycle(peak, cur):
-                logger.warning(f"memory ceiling hit (peak {peak}MB cur {cur}MB) — recycling process")
-                import os as _os
+    try:
+        logger.info(f"poller started interval={settings.CHECK_INTERVAL_SECONDS}s local comfort")
+        # first next estimate so schedule page has data before first sweep finishes
+        state.next_sweep_at = datetime.now(timezone.utc) + timedelta(seconds=settings.CHECK_INTERVAL_SECONDS)
+        while True:
+            try:
+                # Bound the dedup cache: keys are per-creator, but never evicted.
+                if len(_last_room_cache) > 500:
+                    _last_room_cache.clear()
+                state.sweep_in_progress = True
+                state.last_sweep_at = datetime.now(timezone.utc)
+                result, yt, kk = await poll_cycle()
+                await maintenance()  # rename attempts + avatar refreshes (bounded, best-effort)
+                peak = rss_mb()
+                cur = rss_current_mb()
+                logger.info(
+                    f"poll sweep checked={result['checked']}+{yt['checked']}+{kk['checked']} "
+                    f"notified={result['notified']}+{yt['notified']}+{kk['notified']} "
+                    f"rss={peak}MB cur={cur}MB"
+                )
+                if should_recycle(peak, cur):
+                    logger.warning(f"memory ceiling hit (peak {peak}MB cur {cur}MB) — recycling process")
+                    import os as _os
 
-                _os._exit(0)
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logger.exception(f"poll_loop error {type(e).__name__}")
-        finally:
-            state.sweep_in_progress = False
-        # schedule next sweep (jitter chosen now so API can show accurate ETA)
-        state.next_sweep_at = datetime.now(timezone.utc) + timedelta(
-            seconds=settings.CHECK_INTERVAL_SECONDS + random.uniform(0, settings.CHECK_JITTER_SECONDS)
-        )
-        await asyncio.sleep((state.next_sweep_at - datetime.now(timezone.utc)).total_seconds())
+                    _os._exit(0)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.exception(f"poll_loop error {type(e).__name__}")
+            finally:
+                state.sweep_in_progress = False
+            # schedule next sweep (jitter chosen now so API can show accurate ETA)
+            state.next_sweep_at = datetime.now(timezone.utc) + timedelta(
+                seconds=settings.CHECK_INTERVAL_SECONDS + random.uniform(0, settings.CHECK_JITTER_SECONDS)
+            )
+            await asyncio.sleep((state.next_sweep_at - datetime.now(timezone.utc)).total_seconds())
+
+    finally:
+        _is_running = False
+        state.sweep_in_progress = False
+        state.next_sweep_at = None

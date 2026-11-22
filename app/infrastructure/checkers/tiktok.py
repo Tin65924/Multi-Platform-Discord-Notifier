@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import httpx
-from TikTokLive import TikTokLiveClient  # type: ignore
+from TikTokLive.client.web.web_client import TikTokWebClient
 from TikTokLive.client.errors import UserNotFoundError  # type: ignore
 
 logger = logging.getLogger(__name__)
@@ -58,6 +58,7 @@ def _profile_http() -> httpx.AsyncClient:
             },
             follow_redirects=True,
             timeout=15,
+            limits=httpx.Limits(max_connections=2, max_keepalive_connections=2),
         )
     return _profile_client
 
@@ -91,7 +92,15 @@ async def fetch_tiktok_profile(handle: str) -> dict | None:
         return None
 
 
-async def _apply_auth(client):
+async def close_profile_client():
+    """Release the process-owned profile pool on application shutdown."""
+    global _profile_client
+    if _profile_client is not None:
+        await _profile_client.aclose()
+        _profile_client = None
+
+
+async def _apply_auth(web):
     """Attach best-available cookies. Returns mode string for logging."""
     global _session_logged
     mode = "anonymous"
@@ -101,7 +110,7 @@ async def _apply_auth(client):
         auto = await get_cookies()
         for k, v in auto.items():
             try:
-                client.web.cookies.set(k, v)
+                web.cookies.set(k, v, domain=".tiktok.com")
             except Exception:
                 pass
         if auto:
@@ -112,10 +121,10 @@ async def _apply_auth(client):
         sid = (getattr(_settings, "TIKTOK_SESSION_ID", "") or "").strip()
         if sid:
             try:
-                client.web.set_session_id(sid)
+                web.set_session(sid, None)
                 mode = "session"
             except Exception as e:
-                logger.warning(f"tiktok auth: set_session_id failed err={type(e).__name__}")
+                logger.warning(f"tiktok auth: set_session failed err={type(e).__name__}")
     if not _session_logged:
         logger.info(f"tiktok auth: {mode} mode")
         _session_logged = True
@@ -123,108 +132,120 @@ async def _apply_auth(client):
 
 
 class TikTokChecker:
-    """One long-lived TikTokLiveClient per creator, reused across sweeps.
+    """Fixed-size pool of HTTP-only clients, independent of creator count.
 
-    Why reuse: building a client per check churns httpx pools, SSL
-    contexts and signer objects every ~30s, and CPython never returns all
-    of that RSS to the OS — the process ratcheted to Render's 512MB cap.
-    Reuse keeps N bounded clients with warm, reused connections (also
-    faster checks: no TLS handshake per sweep).
-    Safety: each username is checked at most once per sweep and sweeps
-    never overlap (cycle lock), so a per-user lock + the global semaphore
-    rule out concurrent use of one client. Auth is applied once, at creation.
+    A slot is exclusively leased for the whole status/room-id check. The
+    account is passed to each route, so no per-account clients, locks, or
+    websocket/event machinery need to survive a check. Acquire BEFORE
+    allocating: concurrent manual checks cannot inflate the pool.
     """
 
-    def __init__(self):
-        self.semaphore = asyncio.Semaphore(2)
-        self._clients: dict[str, TikTokLiveClient] = {}
-        self._locks: dict[str, asyncio.Lock] = {}
+    def __init__(self, pool_size: int = 2):
+        if not 1 <= pool_size <= 4:
+            raise ValueError("TikTok pool size must be between 1 and 4")
+        self._clients: list[TikTokWebClient | None] = [None] * pool_size
+        self._available: asyncio.Queue[int] = asyncio.Queue(maxsize=pool_size)
+        for slot in range(pool_size):
+            self._available.put_nowait(slot)
+        self._close_lock = asyncio.Lock()
+        self._closing = False
 
-    def _client_for(self, clean: str) -> tuple[TikTokLiveClient, asyncio.Lock, bool]:
-        client = self._clients.get(clean)
-        created = client is None
-        if created:
-            client = TikTokLiveClient(unique_id=f"@{clean}")
-            self._clients[clean] = client
-        lock = self._locks.get(clean)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._locks[clean] = lock
-        return client, lock, created
+    def start(self) -> None:
+        """Allow a new lifespan after the previous one was fully closed."""
+        if self._closing:
+            if any(self._clients) or self._available.qsize() != len(self._clients):
+                raise RuntimeError("TikTok checker is still closing")
+            self._available = asyncio.Queue(maxsize=len(self._clients))
+            for slot in range(len(self._clients)):
+                self._available.put_nowait(slot)
+            self._close_lock = asyncio.Lock()
+            self._closing = False
+
+    def pool_status(self) -> dict:
+        return {"capacity": len(self._clients),
+                "allocated": sum(c is not None for c in self._clients),
+                "in_use": len(self._clients) - self._available.qsize(),
+                "closing": self._closing}
 
     def evict_missing(self, alive: set[str]) -> int:
-        """Drop cached clients/locks for removed creators (slow anti-accretion).
-
-        Close is scheduled in the background: popping without close() leaks
-        the client's httpx pool/SSL per sweep (~18MB/sweep at 24 creators —
-        the 04:53→05:17 climb to 467MB). Hot paths (offline/not_found) must
-        NOT evict at all — reuse the warm client instead.
-        """
-        dead = [u for u in self._clients if u not in alive]
-        for u in dead:
-            self.drop(u)
-        return len(dead)
+        """Compatibility hook: the pool retains no per-creator state."""
+        return 0
 
     def drop(self, clean: str) -> None:
-        """Pop a cached client and close its httpx/WS sessions in background."""
-        client = self._clients.pop(clean, None)
-        self._locks.pop(clean, None)
-        if client is None:
-            return
+        """No cached account/room data to invalidate; never close an active lease."""
 
-        async def _close():
+    async def aclose(self) -> None:
+        """Drain active leases and close every allocated client, once.
+
+        Waiters recheck _closing after acquiring and return without issuing
+        requests. No fire-and-forget close tasks or replacement-client churn.
+        """
+        async with self._close_lock:
+            self._closing = True
+            held = []
             try:
-                await client.close()
-            except Exception:
-                pass
-
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(_close())
-        except RuntimeError:
-            # No running loop (e.g. tests) — best effort, GC handles the rest.
-            pass
+                for _ in self._clients:
+                    held.append(await self._available.get())
+                errors = []
+                for slot, client in enumerate(self._clients):
+                    if client is not None:
+                        try:
+                            await client.close()
+                            self._clients[slot] = None
+                        except Exception as exc:
+                            errors.append(exc)
+                if errors:
+                    raise errors[0]
+            finally:
+                for slot in held:
+                    self._available.put_nowait(slot)
 
     async def is_live(self, username: str) -> LiveInfo:
         clean = username.strip().lstrip("@").lower()
-        client, lock, created = self._client_for(clean)
-        async with self.semaphore:
-            async with lock:
-                try:
-                    if created:
-                        await _apply_auth(client)
-                    try:
-                        live = await asyncio.wait_for(client.is_live(), timeout=12)
-                    except UserNotFoundError:
-                        # Dead handle (renamed/deleted) — distinct from offline
-                        # so the poller can track and surface it.
-                        logger.info(f"tiktok not_found user={clean}")
-                        return LiveInfo(is_live=False, username=clean, error="not_found")
-                    except Exception as e:
-                        logger.info(f"tiktok check failed user={clean} err={type(e).__name__}")
-                        return LiveInfo(is_live=False, username=clean, error="check_failed")
-                    if not live:
-                        return LiveInfo(is_live=False, username=clean)
-                    # Live — resolve the session id for dedup (best effort).
-                    # Stable fallback keeps dedup working even if this fails.
-                    # NOTE: any failure here keeps the LIVE result — only the
-                    # primary check above may report not_found.
-                    room_id = f"live-{clean}"
-                    try:
-                        rid = await asyncio.wait_for(
-                            client.web.fetch_room_id_from_api(unique_id=f"@{clean}"),
-                            timeout=10,
-                        )
-                        if rid:
-                            room_id = str(rid)
-                    except Exception as e:
-                        logger.debug(f"room_id failed user={clean} err={type(e).__name__}")
-                    return LiveInfo(is_live=True, room_id=room_id, username=clean)
-                except asyncio.TimeoutError:
-                    return LiveInfo(is_live=False, username=clean, error="check_failed")
-                except Exception as e:
-                    logger.warning(f"tiktok error user={clean} err={type(e).__name__}")
-                    return LiveInfo(is_live=False, username=clean, error="check_failed")
+        if self._closing:
+            return LiveInfo(is_live=False, username=clean, error="check_failed")
+        slot = await self._available.get()
+        try:
+            if self._closing:
+                return LiveInfo(is_live=False, username=clean, error="check_failed")
+            client = self._clients[slot]
+            if client is None:
+                client = TikTokWebClient(httpx_kwargs={
+                    "timeout": 12,
+                    "limits": httpx.Limits(max_connections=1, max_keepalive_connections=1),
+                })
+                self._clients[slot] = client
+            # Refresh auth in the exclusively leased slot. A cancelled first
+            # check must not leave a permanently unauthenticated cached client.
+            await _apply_auth(client)
+            referer = f"https://www.tiktok.com/@{clean}/live"
+            client.params.update(referer=referer, root_referer=referer)
+            try:
+                live = await asyncio.wait_for(client.fetch_is_live(unique_id=clean), timeout=12)
+            except UserNotFoundError:
+                logger.info(f"tiktok not_found user={clean}")
+                return LiveInfo(is_live=False, username=clean, error="not_found")
+            except Exception as e:
+                logger.info(f"tiktok check failed user={clean} err={type(e).__name__}")
+                return LiveInfo(is_live=False, username=clean, error="check_failed")
+            if not live:
+                return LiveInfo(is_live=False, username=clean)
+            # A failed room-id lookup must preserve the confirmed LIVE result.
+            room_id = f"live-{clean}"
+            try:
+                rid = await asyncio.wait_for(
+                    client.fetch_room_id_from_api(unique_id=f"@{clean}"), timeout=10,
+                )
+                if rid:
+                    room_id = str(rid)
+            except Exception as e:
+                logger.debug(f"room_id failed user={clean} err={type(e).__name__}")
+            return LiveInfo(is_live=True, room_id=room_id, username=clean)
+        except Exception as e:
+            logger.warning(f"tiktok error user={clean} err={type(e).__name__}")
+            return LiveInfo(is_live=False, username=clean, error="check_failed")
+        finally:
+            self._available.put_nowait(slot)
 
 
 checker = TikTokChecker()
