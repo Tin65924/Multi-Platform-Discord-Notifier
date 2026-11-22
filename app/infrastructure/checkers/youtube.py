@@ -126,8 +126,14 @@ class YouTubeChecker:
                 cookies=CONSENT_COOKIES,
                 follow_redirects=True,
                 timeout=15,
+                limits=httpx.Limits(max_connections=2, max_keepalive_connections=2),
             )
         return self._client
+
+    async def aclose(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
 
     async def is_live(self, handle: str, api_key: str = "") -> YTLiveInfo:
         raw = (handle or "").strip()

@@ -41,6 +41,8 @@ async def debug_memory(trace: str = "", user=Depends(require_superadmin)):
         "gc_counts": gc.get_count(),
         "gc_garbage": len(gc.garbage),
     }
+    from ...infrastructure.checkers.tiktok import checker
+    out["tiktok_pool"] = checker.pool_status()
     try:
         out["asyncio_tasks"] = len(asyncio.all_tasks())
     except Exception:

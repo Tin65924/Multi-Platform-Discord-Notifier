@@ -11,7 +11,9 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .logging_config import setup_logging
 from .config import get_settings
-from .infrastructure.persistence.database import init_db
+from .infrastructure.persistence.database import init_db, engine
+from .infrastructure.checkers.tiktok import checker as tiktok_checker, close_profile_client
+from .infrastructure.checkers.youtube import checker as youtube_checker
 from .security import get_current_user
 from .presentation.api.auth import router as auth_router
 from .presentation.api.admins import router as admins_router
@@ -44,19 +46,29 @@ async def _warm_cookies():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global poll_task
-    await init_db()
-    if (getattr(settings, "TT_COOKIE_PROVIDER", "off") or "off").lower() != "off":
-        asyncio.create_task(_warm_cookies())
-    poll_task = asyncio.create_task(poll_loop())
-    logger.info("app started, poller running")
-    yield
-    if poll_task:
-        poll_task.cancel()
-        try:
-            await poll_task
-        except asyncio.CancelledError:
-            pass
-    logger.info("app shutdown")
+    warm_task = None
+    try:
+        await init_db()
+        tiktok_checker.start()
+        if (getattr(settings, "TT_COOKIE_PROVIDER", "off") or "off").lower() != "off":
+            warm_task = asyncio.create_task(_warm_cookies())
+        poll_task = asyncio.create_task(poll_loop())
+        logger.info("app started, poller running")
+        yield
+    finally:
+        tasks = [task for task in (poll_task, warm_task) if task is not None]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        poll_task = None
+        results = await asyncio.gather(
+            tiktok_checker.aclose(), close_profile_client(),
+            youtube_checker.aclose(), engine.dispose(), return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, BaseException):
+                logger.error("shutdown cleanup failed err=%s", type(result).__name__)
+        logger.info("app shutdown")
 
 
 app = FastAPI(title="PlaytopiaLiveNotifier", lifespan=lifespan)
