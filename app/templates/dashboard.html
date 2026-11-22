@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}PlaytopiaLive — Dashboard{% endblock %}
+{% block title %}Playtopia Stream — Dashboard{% endblock %}
 
 {% block nav %}
 <button data-tab="creators" onclick="showTab('creators')" class="pt-nav__link active">Creators</button>
@@ -16,7 +16,7 @@
 
 {% block content %}
 <div class="world-shell pt-section">
-  <p class="pt-kicker">Playtopia Live</p>
+  <p class="pt-kicker">Playtopia Stream</p>
   <h1 class="workspace-title" id="workspaceTitle">Creators</h1>
 
   <!-- Creators (admin + superadmin) -->
@@ -409,7 +409,6 @@ function renderSubs() {
           <button onclick="openEdit(${s.id})" class="btn btn-ghost btn-xs">Edit</button>
           <button onclick="previewSub(${s.id})" class="btn btn-ghost btn-xs">Preview</button>
           <button onclick="delSub(${s.id})" class="btn btn-danger btn-xs">Remove</button>
-          <button onclick="testSub(${s.id})" class="btn btn-ghost btn-xs">Test</button>
           <button onclick="forceSub(${s.id})" class="btn btn-gold btn-xs" style="grid-column:1/-1">Force notification</button>
           ${s.is_live ? `<button onclick="markOffline(${s.id})" class="btn btn-ghost btn-xs" style="grid-column:1/-1; border-color:var(--pt-brick); color:var(--pt-brick)">Mark offline — fix stuck LIVE</button>` : ''}
         </div>
@@ -466,15 +465,9 @@ function openEdit(id) {
     <div><label class="mini">Discord User ID</label>
     <input id="m_discord_id" inputmode="numeric" placeholder="123456789012345678" value="${escapeHtml(s.discord_user_id||'')}"></div>
     <div class="grid2" style="align-items:end">
-      <div><label class="mini">Creator Photo link (used when no upload below)</label>
+      <div><label class="mini">Creator photo URL</label>
       <input id="m_img" placeholder="https://" value="${escapeHtml(s.image_url||'')}"></div>
-      <div><label class="mini">Upload photo (stored on server, wins over link)</label>
-        <div style="display:flex; gap:8px; align-items:center">
-          <input id="m_file" type="file" accept="image/jpeg,image/png,image/webp,image/gif" style="font-size:12px">
-          <button onclick="uploadPhoto()" class="btn btn-ghost btn-xs">Upload</button>
-          <button onclick="fetchProfile()" class="btn btn-ghost btn-xs">Fetch Profile</button>
-        </div>
-      </div>
+      ${platOf(s) === 'tiktok' ? '<button onclick="fetchProfile()" class="btn btn-ghost btn-xs">Fetch profile</button>' : ''}
     </div>
     <div id="m_photoRow" style="display:flex; gap:10px; align-items:center">
       ${s.has_photo ? `<img id="m_preview" src="/api/media/creator/${s.id}" style="width:64px;height:64px;object-fit:cover;border-radius:4px;border:1px solid var(--pt-line-strong)">` : `<span class="mini">${s.image_url ? 'Link photo is used.' : (s.has_avatar ? 'Auto avatar from TikTok is used.' : 'Global default photo is used.')}</span>`}
@@ -499,21 +492,6 @@ function openEdit(id) {
   });
   const w = document.getElementById('m_baseWarn');
   if (w) w.style.display = (s.has_photo && !PUBLIC_BASE_SET) ? 'block' : 'none';
-}
-async function uploadPhoto() {
-  if (!EDITING_ID) return;
-  const f = document.getElementById('m_file').files[0];
-  const m = document.getElementById('m_photoMsg');
-  if (!f) { m.textContent = 'Choose a file first'; m.className = 'msg msg-err'; return; }
-  m.textContent = 'Uploading...'; m.className = 'msg';
-  const fd = new FormData();
-  fd.append('file', f);
-  const r = await api('/api/subscriptions/' + EDITING_ID + '/photo', {method: 'POST', body: fd});
-  const t = r.ok ? (await r.json()).msg : await r.text();
-  m.textContent = t;
-  m.className = r.ok ? 'msg msg-ok' : 'msg msg-err';
-  toast(r.ok ? 'Photo uploaded!' : t, r.ok ? 'ok' : 'err');
-  if (r.ok) { openEdit(EDITING_ID); loadSubs(); }
 }
 async function fetchProfile() {
   if (!EDITING_ID) return;
@@ -608,7 +586,6 @@ async function markOffline(id) {
   toast(t, r.ok ? 'ok' : 'err');
   if (r.ok) loadSubs();
 }
-async function testSub(id){ const r = await api('/api/subscriptions/'+id+'/test',{method:'POST'}); toast(r.ok?'Test sent! Check Discord.':await r.text(), r.ok ? 'ok' : 'err'); }
 async function delSub(id){
   const s = subById(id);
   if(!confirm('Remove this creator?'))return;

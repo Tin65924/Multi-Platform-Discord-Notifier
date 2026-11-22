@@ -1,4 +1,4 @@
-# PlaytopiaLiveNotifier
+# Playtopia Stream
 
 Multi-platform LIVE → Discord notifier (TikTok, YouTube, Kick; Twitch stored, poller pending). Optimized for ~60 creators on Render Free + Neon.
 

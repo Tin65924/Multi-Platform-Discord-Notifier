@@ -71,7 +71,7 @@ async def lifespan(app: FastAPI):
         logger.info("app shutdown")
 
 
-app = FastAPI(title="PlaytopiaLiveNotifier", lifespan=lifespan)
+app = FastAPI(title="Playtopia Stream", lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=settings.APP_SECRET_KEY, max_age=86400 * 7)
 
 BASE_DIR = Path(__file__).resolve().parent
