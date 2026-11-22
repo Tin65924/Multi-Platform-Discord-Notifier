@@ -415,6 +415,7 @@ function renderSubs() {
         <div class="creator__actions">
           <button onclick="openEdit(${s.id})" class="btn btn-ghost btn-xs">Edit</button>
           <button onclick="previewSub(${s.id})" class="btn btn-ghost btn-xs">Preview</button>
+          ${platOf(s) === 'tiktok' ? `<button onclick="testLatestUpload(${s.id}, this)" class="btn btn-ghost btn-xs">Test upload</button>` : ''}
           <button onclick="delSub(${s.id})" class="btn btn-danger btn-xs">Remove</button>
           <button onclick="forceSub(${s.id})" class="btn btn-gold btn-xs" style="grid-column:1/-1">Force notification</button>
           ${s.is_live ? `<button onclick="markOffline(${s.id})" class="btn btn-ghost btn-xs" style="grid-column:1/-1; border-color:var(--pt-brick); color:var(--pt-brick)">Mark offline — fix stuck LIVE</button>` : ''}
@@ -521,6 +522,21 @@ async function removePhoto() {
   const t = r.ok ? (await r.json()).msg : await r.text();
   toast(t, r.ok ? 'ok' : 'err');
   if (r.ok) { openEdit(EDITING_ID); loadSubs(); }
+}
+async function testLatestUpload(id, button) {
+  if (button.disabled) return;
+  button.disabled = true;
+  button.textContent = 'Checking upload...';
+  try {
+    const response = await api('/api/subscriptions/' + id + '/test-upload', {method: 'POST'});
+    const result = await response.json();
+    toast(response.ok ? result.msg : result.detail, response.ok ? 'ok' : 'err');
+  } catch {
+    toast('Could not confirm delivery. Check the upload channel before retrying.', 'err');
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Test upload';
+  }
 }
 async function saveEdit() {
   if (!EDITING_ID) return;

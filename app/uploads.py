@@ -146,6 +146,22 @@ async def notice(client, sub_id, handle, vid, published, mode):
 PAGE_ERRORS = (httpx.HTTPError, TimeoutError, KeyError, TypeError, ValueError, AttributeError, RecursionError)
 
 
+async def latest_public_video(client, handle, expected_owner):
+    """Pick the newest public video in the embed, regardless of pinned order."""
+    if not HANDLE.fullmatch(handle):
+        raise ValueError("invalid creator")
+    state = await page(client, "/embed/@" + handle, b"__FRONTITY_CONNECT_STATE__")
+    owner, ids = feed(state, handle)
+    if expected_owner and owner != expected_owner:
+        raise ValueError("creator identity changed")
+    # TikTok video IDs encode creation time in their high 32 bits. This ranking
+    # is for a labeled manual test only; automatic alerts require publication().
+    now = time.time()
+    if any(not 0 < (int(vid) >> 32) <= now for vid in ids):
+        raise ValueError("unexpected video ID timestamp")
+    return max(ids, key=int, default=None)
+
+
 async def check(client, sub_id, handle, mode, counts):
     if not HANDLE.fullmatch(handle):
         counts["invalid_handle"] += 1

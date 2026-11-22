@@ -20,6 +20,7 @@ EXPECTED = {
     ("POST", "/api/subscriptions/{sub_id}/mark-offline"),
     ("DELETE", "/api/subscriptions/{sub_id}"),
     ("POST", "/api/subscriptions/{sub_id}/test"),
+    ("POST", "/api/subscriptions/{sub_id}/test-upload"),
     ("POST", "/api/subscriptions/{sub_id}/force-notify"),
     ("GET", "/api/subscriptions/{sub_id}/payload"),
     ("POST", "/api/subscriptions/{sub_id}/check-now"),

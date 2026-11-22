@@ -1,4 +1,7 @@
 """Subscription (creator) routes."""
+import asyncio
+import httpx
+
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import select, func
@@ -8,6 +11,7 @@ from ...infrastructure.persistence.database import get_session
 from ...infrastructure.persistence.models import Subscription, GlobalSettings, LiveSession
 from ...infrastructure.persistence.repos import _close_open_sessions
 from ...poller import forget_room
+from ... import uploads
 from ...schemas import (
     SubscriptionCreate, HandleUpdate, SubscriptionStyleIn, normalize_handle,
 )
@@ -274,6 +278,50 @@ async def delete_sub(sub_id: int, session: AsyncSession = Depends(get_session), 
     forget_room(sub.platform, name)
     await log_audit(user["username"], "creator.remove", f"removed @{name}")
     return {"msg": "Deleted"}
+
+
+_upload_tests_in_progress: set[int] = set()
+
+
+@router.post("/subscriptions/{sub_id}/test-upload")
+async def send_test_upload(sub_id: int, session: AsyncSession = Depends(get_session), user=Depends(require_admin)):
+    sub = await session.get(Subscription, sub_id)
+    if sub is None:
+        raise HTTPException(404, "Creator not found.")
+    if sub.platform != "tiktok":
+        raise HTTPException(400, "Test uploads are available for TikTok creators only.")
+    handle, owner = sub.tiktok_username, sub.tiktok_user_id
+    url = uploads.destination(await session.get(GlobalSettings, 1))
+    if not url:
+        raise HTTPException(409, "Upload delivery is unavailable. Check the dedicated upload webhook, notification pause and LIVE relay settings.")
+    await session.close()
+    if sub_id in _upload_tests_in_progress or len(_upload_tests_in_progress) >= 3:
+        raise HTTPException(429, "An upload test is already running. Try again shortly.")
+    _upload_tests_in_progress.add(sub_id)
+    try:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+            try:
+                async with asyncio.timeout(40):
+                    vid = await uploads.latest_public_video(client, handle, owner)
+            except uploads.PAGE_ERRORS:
+                raise HTTPException(502, "TikTok could not confirm the latest public upload. Nothing was sent.")
+            if not vid:
+                raise HTTPException(404, "No public uploads were found for this creator.")
+            link = f"{uploads.ROOT}/@{handle}/video/{vid}"
+            try:
+                response = await client.post(url, params={"wait": "true"}, json={
+                    "content": f"Testing upload\n{link}", "allowed_mentions": {"parse": []},
+                })
+            except httpx.RequestError:
+                raise HTTPException(502, "Discord delivery is uncertain. Check the upload channel before retrying.")
+            if not response.is_success:
+                if response.is_server_error:
+                    raise HTTPException(502, "Discord delivery is uncertain. Check the upload channel before retrying.")
+                raise HTTPException(502, f"Discord rejected the upload test (HTTP {response.status_code}).")
+        await log_audit(user["username"], "upload.test", f"@{handle} video {vid}")
+        return {"msg": f"Test upload sent for @{handle}.", "video_url": link}
+    finally:
+        _upload_tests_in_progress.discard(sub_id)
 
 
 @router.post("/subscriptions/{sub_id}/test")
