@@ -8,3 +8,5 @@ import os
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test_phase0.db"
 os.environ["APP_SECRET_KEY"] = "phase0-test-secret"
 os.environ.setdefault("TT_COOKIE_PROVIDER", "off")
+
+os.environ["TIKTOK_UPLOAD_MODE"] = "off"

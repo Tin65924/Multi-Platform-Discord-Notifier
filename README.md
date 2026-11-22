@@ -59,3 +59,20 @@ Dependency direction only: `presentation → application → domain ← infrastr
 - One generic sweep (`application/sweep.py`) drives all platforms; adapters live in `infrastructure/checkers/` (TikTok via TikTokLive lib, YouTube keyless page parse + optional API confirm, Kick official API).
 - Deduplication by session id (`room_id`/`videoId`/`start_time`) + 15 min cooldown. Inconclusive checks preserve card state instead of flipping offline.
 - Dashboard: platform filter card, creator cards grid, EDIT/PREVIEW/REMOVE/TEST/FORCE per card, global defaults, admins + audit (superadmin).
+
+## TikTok upload pilot
+
+Every enabled TikTok subscription is checked by handle. By default the worker observes public creator embeds and logs counts under `TikTok uploads`. It runs alongside the web process, at most one request at a time, targeting five-minute sweeps while the process is awake. An external LIVE cron call does not start an upload sweep.
+
+- `TIKTOK_UPLOAD_MODE=observe` (default) discovers posts without sending. Set `off` to stop upload checks.
+- For delivery, configure a separate Discord webhook in Render as `TIKTOK_UPLOAD_WEBHOOK_URL`, then set `TIKTOK_UPLOAD_MODE=deliver` and restart. Keep the livestream webhook in Dashboard Defaults or `DASHBOARD_WEBHOOK_URL`. Different tokens for the same webhook ID are still the same destination. A configured LIVE relay disables upload sends because its upstream destination cannot be verified. The global notification pause applies to uploads as well.
+- Compare observed uploads with real creator posts from the deployment before switching to delivery. Review `feed_unverified`, `date_unverified`, `observed`, and `outside_window` in sweep logs. Mode changes, creator changes, initial discovery and gaps over 15 minutes establish silent baselines.
+- A newly visible video must belong to the same numeric creator ID and have a video-detail publication time strictly after the previous healthy check and no later than the current one. Reordered, pinned, undated, delayed or private posts can be skipped. Public embeds are a limited selection and can change or be blocked.
+- The `upload_notices` table records verified candidates by unique video ID. A delivery claim commits before the HTTP POST. A crash, timeout, rejection or ambiguous response never triggers an automatic resend. This favors a missed alert over a duplicate. Enablement never replays observation history.
+
+To run the accelerated offline soak in PowerShell:
+
+```powershell
+$env:UPLOAD_SOAK_CHECKS = "3000"
+python -m pytest -q -s tests/test_upload_pilot.py
+```

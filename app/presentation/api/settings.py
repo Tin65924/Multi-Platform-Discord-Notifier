@@ -1,5 +1,5 @@
 """Settings + broadcast + wildlines routes."""
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...infrastructure.persistence.database import get_session
@@ -39,6 +39,9 @@ async def get_settings_api(session: AsyncSession = Depends(get_session), user=De
 
 @router.put("/settings")
 async def put_settings(payload: GlobalSettingsIn, session: AsyncSession = Depends(get_session), user=Depends(require_admin)):
+    upload_url = settings.TIKTOK_UPLOAD_WEBHOOK_URL
+    if upload_url and payload.webhook_url.split("/")[-2:-1] == upload_url.split("/")[-2:-1]:
+        raise HTTPException(400, "Livestream and TikTok upload webhooks must be different.")
     gs = await session.get(GlobalSettings, 1)
     if not gs:
         gs = GlobalSettings(id=1, webhook_url=payload.webhook_url, ping_role_id=payload.ping_role_id,
