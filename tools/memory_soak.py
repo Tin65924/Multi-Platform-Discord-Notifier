@@ -78,7 +78,7 @@ async def run(args):
     before = current_rss_mb()
     samples = []
     try:
-        for i in range(args.checks):
+        async def check(i):
             name = f"creator{i % args.creators}"
             if args.mode == "per-creator":
                 if name not in legacy:
@@ -91,9 +91,13 @@ async def run(args):
                 result = await checker.is_live(name)
                 assert result.error is None and not result.is_live
                 checker.drop(name)  # repeated remove/refresh requests must not allocate
-            if (i + 1) % 1000 == 0 or i + 1 == args.checks:
+
+        for start in range(0, args.checks, args.concurrency):
+            end = min(start + args.concurrency, args.checks)
+            await asyncio.gather(*(check(i) for i in range(start, end)))
+            if end // 1000 != start // 1000 or end == args.checks:
                 gc.collect()
-                samples.append({"checks": i + 1, "rss_mb": current_rss_mb()})
+                samples.append({"checks": end, "rss_mb": current_rss_mb()})
         if args.mode == "pooled":
             assert len(created) <= 2
     finally:
@@ -106,7 +110,7 @@ async def run(args):
         tiktok.TikTokWebClient = original
     assert all(client.httpx_client.is_closed for client in created)
     print(json.dumps({"mode": args.mode, "creators": args.creators,
-                      "checks": args.checks, "clients_created": len(created),
+                      "checks": args.checks, "concurrency": args.concurrency, "clients_created": len(created),
                       "rss_before_mb": before, "samples": samples,
                       "all_clients_closed": True}, indent=2))
 
@@ -116,7 +120,10 @@ if __name__ == "__main__":
     parser.add_argument("--mode", choices=("pooled", "per-creator"), default="pooled")
     parser.add_argument("--creators", type=int, default=60)
     parser.add_argument("--checks", type=int, default=10000)
+    parser.add_argument("--concurrency", type=int, default=1)
     args = parser.parse_args()
+    if not 1 <= args.concurrency <= 500 or (args.mode == "per-creator" and args.concurrency != 1):
+        parser.error("concurrency must be 1..500 for pooled mode or 1 for per-creator mode")
     if not 1 <= args.creators <= 500 or not 1 <= args.checks <= 100000:
         parser.error("creators must be 1..500 and checks must be 1..100000")
     asyncio.run(run(args))

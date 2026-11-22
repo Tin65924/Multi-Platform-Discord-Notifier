@@ -22,4 +22,5 @@ jobs:
           cache: pip
       - run: python -m pip install -r requirements-test.txt
       - run: python -m pytest tests -q
-      - run: python -m tools.memory_soak --mode pooled --checks 10000
+      - run: python -m tools.memory_soak --mode pooled --checks 10000 --concurrency 50
+      - run: python -m tools.dashboard_load
