@@ -234,22 +234,8 @@ async def maintenance():
                 await session.commit()
             except Exception as e:
                 logger.debug(f"sweep prune skipped err={type(e).__name__}")
-            # Warm clients are reused across sweeps (never bulk-cleared).
-            # Avatars refresh on-notify. Drop checker clients for removed
-            # creators; cap attempt memory.
-            try:
-                from .infrastructure.checkers.tiktok import checker as _tt
-
-                rows = await session.execute(
-                    select(Subscription.tiktok_username).where(
-                        Subscription.enabled == True  # noqa
-                    )
-                )
-                _tt.evict_missing({r[0] for r in rows.all()})
-                if len(_maint_attempts) > 500:
-                    _maint_attempts.clear()
-            except Exception:
-                pass
+            if len(_maint_attempts) > 500:
+                _maint_attempts.clear()
     except Exception as e:
         logger.debug(f"maintenance skipped err={type(e).__name__}")
 

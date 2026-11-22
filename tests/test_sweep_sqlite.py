@@ -206,3 +206,23 @@ def test_missing_room_id_does_not_repeat_notification(db, monkeypatch):
         _, sent = _run_poll(monkeypatch, {handle: LiveInfo(True, room, handle)})
         counts.append(len(sent))
     assert counts == [1, 0, 0, 0, 1]
+
+
+def test_offline_sweep_closes_previous_live_session(db, monkeypatch):
+    from sqlalchemy import select
+    from app.infrastructure.checkers.tiktok import LiveInfo
+    from app.infrastructure.persistence.database import async_session
+    from app.infrastructure.persistence.models import LiveSession
+
+    handle = "stream_ended"
+    _add_sub(handle)
+    _run_poll(monkeypatch, {handle: LiveInfo(True, "room-to-close", handle)})
+    _run_poll(monkeypatch, {})
+
+    async def check_history():
+        async with async_session() as session:
+            rows = (await session.scalars(select(LiveSession).where(
+                LiveSession.handle == handle))).all()
+            assert rows and all(row.ended_at is not None for row in rows)
+    asyncio.run(check_history())
+    assert not _sub(handle)["is_live"]

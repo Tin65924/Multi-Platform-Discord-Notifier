@@ -217,7 +217,7 @@ def test_offline_flips_card_and_logs():
     assert repo.by_id[1].is_live is False
     assert notifier.sent == []
     assert [(r.handle, r.is_live, r.notified) for r in sink.rows] == [("a", False, False)]
-    assert sessions.closed == [1]
+    assert ("mark_offline", 1) in repo.calls
 
 
 def test_fresh_live_notifies_and_caches():
