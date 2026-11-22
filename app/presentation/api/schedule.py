@@ -25,7 +25,7 @@ async def get_schedule(session: AsyncSession = Depends(get_session), user=Depend
     state = get_schedule_state()
     # Rebuild the poller's sort order so ETA matches reality.
     result = await session.execute(
-        select(Subscription).where(Subscription.enabled == True).order_by(Subscription.id)  # noqa
+        select(Subscription).where(Subscription.enabled.is_(True), Subscription.track_live.is_(True)).order_by(Subscription.id)  # noqa
     )
     subs = result.scalars().all()
     # Same sort as the generic sweep: active (recent last_live_at) first

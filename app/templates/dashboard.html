@@ -39,6 +39,11 @@
           <input id="tiktokInput" aria-label="Creator handle or profile URL" placeholder="https://www.tiktok.com/@username or @username" required>
           <button class="btn btn-gold">Add</button>
         </form>
+        <fieldset id="addTracking">
+          <legend class="mini">Check this creator for</legend>
+          <label><input id="addLive" type="checkbox" checked> Livestream</label>
+          <label><input id="addUploads" type="checkbox" checked> Uploads</label>
+        </fieldset>
         <div id="addMsg" class="msg"></div>
       </div>
     </div>
@@ -357,6 +362,7 @@ function dispHandle(s) {
 function selectPlatform(p) {
   if (!Object.hasOwn(PLATFORMS, p)) p = 'tiktok';
   PLATFORM = p;
+  document.getElementById('addTracking').classList.toggle('hidden', p !== 'tiktok');
   try { localStorage.setItem('pt_platform', p); } catch {}
   document.getElementById('platformSelect').value = p;
   document.getElementById('addTitle').textContent = PLATFORMS[p].title;
@@ -452,6 +458,10 @@ function openEdit(id) {
   openModal('Edit creator', `
     <div><label class="mini">${userLabel(platOf(s))}</label>
     <div style="font-size:15px">${escapeHtml(disp)}</div></div>
+    ${platOf(s) === 'tiktok' ? `<fieldset><legend class="mini">Check this creator for</legend>
+      <label><input id="editLive" type="checkbox" ${s.track_live !== false ? 'checked' : ''}> Livestream</label>
+      <label><input id="editUploads" type="checkbox" ${s.track_uploads !== false ? 'checked' : ''}> Uploads</label>
+    </fieldset>` : ''}
     <div><label class="mini">New handle (only if they renamed — style and history are kept)</label>
     <div style="display:flex; gap:8px">
       <input id="m_newhandle" placeholder="@newname">
@@ -516,6 +526,8 @@ async function saveEdit() {
   if (!EDITING_ID) return;
   const cleared = document.getElementById('m_useglobal').checked;
   const body = {
+    track_live: document.getElementById('editLive')?.checked,
+    track_uploads: document.getElementById('editUploads')?.checked,
     author_name: document.getElementById('m_author').value || null,
     discord_username: document.getElementById('m_discord').value || null,
     discord_user_id: document.getElementById('m_discord_id').value || null,
@@ -596,7 +608,9 @@ async function delSub(id){
 }
 document.getElementById('addForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const r = await api('/api/subscriptions',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({platform: PLATFORM, creator_input: tiktokInput.value})});
+  const r = await api('/api/subscriptions',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({platform: PLATFORM, creator_input: tiktokInput.value,
+    ...(PLATFORM === 'tiktok' ? {track_live: document.getElementById('addLive').checked,
+      track_uploads: document.getElementById('addUploads').checked} : {})})});
   const m = document.getElementById('addMsg');
   const input = tiktokInput.value;
   const t = r.ok ? (await r.json()).msg : await r.text();
@@ -604,7 +618,9 @@ document.getElementById('addForm').addEventListener('submit', async (e) => {
   m.className = r.ok ? 'msg msg-ok' : 'msg msg-err';
   if (r.ok) {
     toast(`Creator ${input} has been added to ${PLATFORMS[PLATFORM].label}`, 'ok');
-    tiktokInput.value=''; loadSubs();
+    tiktokInput.value='';
+    document.getElementById('addLive').checked = document.getElementById('addUploads').checked = true;
+    loadSubs();
   } else toast(t, 'err');
 });
 

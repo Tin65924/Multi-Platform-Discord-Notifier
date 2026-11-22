@@ -1,4 +1,4 @@
-from sqlalchemy import String, Boolean, DateTime, LargeBinary, Text, UniqueConstraint, func
+from sqlalchemy import String, Boolean, DateTime, LargeBinary, Text, UniqueConstraint, func, true
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime, timezone
 from .database import Base
@@ -74,6 +74,8 @@ class Subscription(Base):
     tiktok_username: Mapped[str] = mapped_column(String(64), nullable=False, index=True)  # platform handle (see platform)
     label: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
+    track_live: Mapped[bool] = mapped_column(Boolean, server_default=true(), default=True)
+    track_uploads: Mapped[bool] = mapped_column(Boolean, server_default=true(), default=True)
     upload_checkpoint: Mapped[str | None] = mapped_column(Text, nullable=True, deferred=True)
 
     # Per-creator embed customization (empty = use global default).

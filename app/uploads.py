@@ -74,7 +74,7 @@ def publication(state, handle, owner, vid):
 async def advance(sub_id, handle, owner, ids, now, mode):
     """Commit the snapshot before any external effect. Only the CAS winner proceeds."""
     async with async_session() as db:
-        identity = (Subscription.id == sub_id, Subscription.enabled.is_(True),
+        identity = (Subscription.id == sub_id, Subscription.enabled.is_(True), Subscription.track_uploads.is_(True),
                     Subscription.platform == "tiktok", Subscription.tiktok_username == handle,
                     or_(Subscription.tiktok_user_id.is_(None), Subscription.tiktok_user_id == owner))
         row = (await db.execute(select(Subscription.upload_checkpoint).where(*identity))).first()
@@ -110,7 +110,7 @@ def destination(gs):
 async def notice(client, sub_id, handle, vid, published, mode):
     async with async_session() as db:
         sub = await db.get(Subscription, sub_id)
-        if not sub or not sub.enabled or sub.platform != "tiktok" or sub.tiktok_username != handle:
+        if not sub or not sub.enabled or not sub.track_uploads or sub.platform != "tiktok" or sub.tiktok_username != handle:
             return "removed"
         url = destination(await db.get(GlobalSettings, 1)) if mode == "deliver" else None
         status = "claimed" if url else ("observed" if mode == "observe" else "suppressed")
@@ -185,7 +185,8 @@ async def upload_loop():
             try:
                 async with async_session() as db:
                     creators = (await db.execute(select(Subscription.id, Subscription.tiktok_username)
-                                .where(Subscription.platform == "tiktok", Subscription.enabled.is_(True))
+                                .where(Subscription.platform == "tiktok", Subscription.enabled.is_(True),
+                                       Subscription.track_uploads.is_(True))
                                 .order_by(Subscription.id))).all()
                 for sub_id, handle in creators:
                     try:
