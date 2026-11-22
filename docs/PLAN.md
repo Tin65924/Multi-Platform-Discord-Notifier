@@ -10,7 +10,7 @@ In:
 - Track creators per platform (TikTok @username, YouTube @handle/channel, Twitch login, Kick slug — link or handle accepted, normalized per platform), detect LIVE start, POST embed to 1 Discord channel webhook
 - Dashboard: platform filter card, creator cards grid, EDIT (modal) / PREVIEW (Discord render + raw JSON) / REMOVE / TEST / FORCE per card, global defaults, admins + audit log
 - Deduplicate: one ping per live session (session id + 15 min cooldown); inconclusive checks preserve state
-- External cron trigger: `/api/cron/poll`, open (no secret), skips when a sweep is already running
+- External cron trigger: `/api/cron/poll`, requires a configured secret, skips when a sweep is already running
 
 Out:
 - Video uploads, chat/gifts/viewer tracking, multi-server, Discord bot/slash commands, paid APIs

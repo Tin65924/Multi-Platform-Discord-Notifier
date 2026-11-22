@@ -18,7 +18,7 @@ Multi-platform LIVE → Discord notifier (TikTok, YouTube, Kick; Twitch stored, 
 4. Deploy -> open `https://your-app.onrender.com/` -> log in as superadmin -> Defaults tab -> save webhook.
 5. Keep alive + force sweeps (cron-job.org):
    - `GET https://your-app.onrender.com/health` every 14 min (no auth)
-   - `GET https://your-app.onrender.com/api/cron/poll` every 5 min (skips if a sweep is already running). Set `CRON_SECRET` in Render env and append `?secret=...` to lock the trigger; unset = open.
+   - `GET https://your-app.onrender.com/api/cron/poll` every 5 min (skips if a sweep is already running). Set `CRON_SECRET` in Render env and append `?secret=...` to enable the trigger. Without a secret, external sweeps return 403. The internal polling loop still runs.
 
 First deploy runs DB migrations automatically (`init_db`): creates tables, backfills the `platform` column, and swaps the handle-unique index for the composite `(platform, handle)` one. Safe to redeploy — all steps are idempotent.
 
@@ -37,7 +37,7 @@ uvicorn app.main:app --reload
 ## Security
 
 - No secrets in repo, only `.env.example` (`.env` is gitignored)
-- Session login (admin/superadmin roles, pbkdf2 hashes, 10-attempts/5-min per-IP rate limit); `/api/cron/poll` accepts an optional `CRON_SECRET`
+- Session login (admin/superadmin roles, pbkdf2 hashes, 10-attempts/5-min per-IP rate limit); `/api/cron/poll` requires a configured `CRON_SECRET`
 - Webhook URL validated by regex; creator handles normalized per platform; SQL via ORM
 - Logs redacted (webhook URLs, DB URL) — see `app/logging_config.py`
 - Platform secrets are server-side only, never sent to the frontend
