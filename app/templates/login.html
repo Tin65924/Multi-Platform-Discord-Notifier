@@ -21,11 +21,11 @@
     <div class="pt-goldrule"></div>
     <form id="loginForm" style="padding:20px 22px 22px; display:grid; gap:12px">
       <label for="username">Username</label>
-      <input id="username" placeholder="Username" autocomplete="username" required>
+      <input id="username" placeholder="Username" autocapitalize="none" spellcheck="false" autocomplete="username" required>
       <label for="password">Password</label>
       <input id="password" type="password" placeholder="Password" autocomplete="current-password" required>
       <button class="btn btn-gold" style="width:100%">Sign in</button>
-      <p id="msg" role="alert" class="msg msg-err"></p>
+      <p id="msg" role="status" aria-live="polite" class="msg msg-err"></p>
     </form>
   </div>
 </div>
@@ -37,16 +37,22 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
   const button = form.querySelector('button');
   if (button.disabled) return;
   button.disabled = true;
+  button.textContent = 'Signing in...';
   m.textContent = '';
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 45000);
   try {
-    const r = await fetch('/api/login', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    const r = await fetch('/api/login', {signal: controller.signal, method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({username: form.querySelector('#username').value, password: form.querySelector('#password').value})});
-    if (r.ok) { location.assign('/'); return; }
+    if (r.ok && (await r.json()).msg === 'Logged in') { location.assign('/'); return; }
     m.textContent = r.status === 401 ? 'Incorrect username or password.' :
-      r.status === 429 ? 'Too many attempts. Try again later.' : 'Sign-in failed. Please try again.';
+      r.status === 429 ? 'Too many attempts. Wait five minutes before trying again.' : 'The server could not complete sign-in. Please try again.';
   } catch {
-    m.textContent = 'Connection lost. Check your connection and try again.';
+    m.textContent = controller.signal.aborted ? 'The server took too long. Please try again.' :
+      'Could not complete sign-in. Check your connection and try again.';
   } finally {
+    clearTimeout(timeout);
+    button.textContent = 'Sign in';
     button.disabled = false;
   }
 });
