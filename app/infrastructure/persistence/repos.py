@@ -21,7 +21,8 @@ async def _open_session(session, sub, room_id: str, now: datetime):
     """Get-or-create the open session row for this live. Restart-safe.
 
     Same room still open -> reuse (no duplicates). Different room open
-    (e.g. fallback id -> real id) -> close the old one, open a new one.
+    -> close the old one, open a new one. A fallback is an unknown room
+    within the current broadcast until a confirmed offline or room change.
     """
     res = await session.execute(
         select(LiveSession).where(
@@ -29,8 +30,15 @@ async def _open_session(session, sub, room_id: str, now: datetime):
             LiveSession.ended_at.is_(None),
         )
     )
+    platform = sub.platform or "tiktok"
+    fallback_prefix = {"tiktok": "live-", "youtube": "live-yt-", "kick": "live-kk-"}.get(platform)
+    fallback = fallback_prefix + sub.tiktok_username if fallback_prefix else None
     for o in res.scalars().all():
         if o.room_id == room_id:
+            return o
+        if o.handle == sub.tiktok_username and fallback in (room_id, o.room_id):
+            if room_id != fallback:
+                o.room_id = room_id
             return o
         o.ended_at = now
     row = LiveSession(

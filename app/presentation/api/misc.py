@@ -12,11 +12,11 @@ router = APIRouter()
 
 
 def _cron_authorized(provided: str | None) -> bool:
-    """Open when CRON_SECRET is unset (legacy); constant-time compare when set."""
+    """Require a configured secret to run an external sweep."""
     want = (settings.CRON_SECRET or "").strip()
     if not want:
-        return True
-    return _secrets.compare_digest((provided or "").strip(), want)
+        return False
+    return _secrets.compare_digest((provided or "").strip().encode(), want.encode())
 
 
 def _require_cron(secret: str | None) -> None:
@@ -68,7 +68,7 @@ async def debug_memory(trace: str = "", user=Depends(require_superadmin)):
 async def cron_poll(secret: str | None = None):
     """Sweep trigger: runs unless one is already running.
 
-    Pass ?secret= when CRON_SECRET is set (Render env). Unset = open (legacy).
+    Pass ?secret= when CRON_SECRET is set (Render env). Unset disables external triggers.
     """
     _require_cron(secret)
     return await poll_cycle_try()

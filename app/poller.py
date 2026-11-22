@@ -25,6 +25,12 @@ settings = get_settings()
 _last_room_cache: dict[str, str] = {}
 
 
+def forget_room(platform: str | None, handle: str) -> None:
+    prefix = {"tiktok": "tt:", "youtube": "yt:", "kick": "kk:"}.get(platform or "tiktok")
+    if prefix:
+        _last_room_cache.pop(prefix + handle, None)
+
+
 async def poll_cycle():
     """Full cycle: all three platform sweeps concurrently.
 
@@ -179,6 +185,7 @@ async def _try_migrate(session, sub, prof, now) -> bool:
         sub.avatar_checked_at = now
     sub.first_not_found_at = None
     await session.commit()
+    forget_room(sub.platform, old)
     await log_audit("system", "creator.rename", f"auto-migrated @{old} -> @{new}")
     logger.info(f"rename auto-migrated @{old} -> @{new}")
     return True

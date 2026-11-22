@@ -167,3 +167,42 @@ def test_maintenance_preserves_long_running_stream(db, monkeypatch):
     assert _sub(handle)["is_live"]
     _, sent = _run_poll(monkeypatch, status)
     assert sent == []
+
+
+def test_manual_offline_closes_session_and_forgets_only_its_platform(db, monkeypatch):
+    from sqlalchemy import select
+    import app.poller as poller
+    from app.infrastructure.checkers.tiktok import LiveInfo
+    from app.infrastructure.persistence.database import async_session
+    from app.infrastructure.persistence.models import LiveSession, Subscription
+    from app.presentation.api.subscriptions import mark_offline
+
+    handle = "manual_reset"
+    _add_sub(handle)
+    _run_poll(monkeypatch, {handle: LiveInfo(True, "room8", handle)})
+    poller._last_room_cache["yt:" + handle] = "different-room"
+
+    async def reset():
+        async with async_session() as session:
+            sub = (await session.scalars(select(Subscription).where(
+                Subscription.tiktok_username == handle))).one()
+            for _ in range(2):
+                await mark_offline(sub.id, session, {"username": "operator"})
+            rows = (await session.scalars(select(LiveSession).where(
+                LiveSession.handle == handle))).all()
+            assert rows and all(row.ended_at is not None for row in rows)
+    asyncio.run(reset())
+    assert not _sub(handle)["is_live"]
+    assert "tt:" + handle not in poller._last_room_cache
+    assert poller._last_room_cache["yt:" + handle] == "different-room"
+
+
+def test_missing_room_id_does_not_repeat_notification(db, monkeypatch):
+    from app.infrastructure.checkers.tiktok import LiveInfo
+    handle = "room_recovery"
+    _add_sub(handle)
+    counts = []
+    for room in ("live-" + handle, "real-1", "live-" + handle, "real-1", "real-2"):
+        _, sent = _run_poll(monkeypatch, {handle: LiveInfo(True, room, handle)})
+        counts.append(len(sent))
+    assert counts == [1, 0, 0, 0, 1]

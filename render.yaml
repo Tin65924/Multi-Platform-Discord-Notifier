@@ -43,7 +43,7 @@ services:
       - key: YOUTUBE_API_KEY
         sync: false # Data API v3 key, confirm-step only (never search.list)
       - key: CRON_SECRET
-        sync: false # when set, /api/cron/poll requires ?secret= (else open trigger)
+        sync: false # when set, /api/cron/poll requires ?secret= (else external triggers are disabled)
       - key: MAX_CREATORS
         value: 60
       - key: CHECK_INTERVAL_SECONDS

@@ -2,13 +2,13 @@
 import pytest
 
 
-def test_cron_open_when_unset():
+def test_cron_disabled_when_unset():
     from app.presentation.api import misc
     old = misc.settings.CRON_SECRET
     misc.settings.CRON_SECRET = ""
     try:
-        assert misc._cron_authorized(None) is True
-        assert misc._cron_authorized("anything") is True
+        assert misc._cron_authorized(None) is False
+        assert misc._cron_authorized("anything") is False
     finally:
         misc.settings.CRON_SECRET = old
 
@@ -20,6 +20,7 @@ def test_cron_secret_enforced():
     try:
         assert misc._cron_authorized("s3cr3t") is True
         assert misc._cron_authorized("wrong") is False
+        assert misc._cron_authorized("\u2603") is False
         assert misc._cron_authorized(None) is False
         assert misc._cron_authorized("") is False
     finally:

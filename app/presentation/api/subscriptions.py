@@ -6,6 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...infrastructure.persistence.database import get_session
 from ...infrastructure.persistence.models import Subscription, GlobalSettings, LiveSession
+from ...infrastructure.persistence.repos import _close_open_sessions
+from ...poller import forget_room
 from ...schemas import (
     SubscriptionCreate, HandleUpdate, SubscriptionStyleIn, normalize_handle,
 )
@@ -218,36 +220,21 @@ async def update_handle(sub_id: int, payload: HandleUpdate, session: AsyncSessio
         except Exception:
             pass
     await session.commit()
+    forget_room(sub.platform, old)
     await log_audit(user["username"], "creator.relink", f"@{old} -> @{handle} on {platform_label(sub.platform)}")
     return {"msg": f"Updated @{old} to @{handle} — next sweep picks up their live"}
 
 
 @router.post("/subscriptions/{sub_id}/mark-offline")
 async def mark_offline(sub_id: int, session: AsyncSession = Depends(get_session), user=Depends(require_admin)):
-    """Force a creator's card to offline (fixes stuck LIVE).
-
-    Closes open LiveSessions, clears dedup cache and evicts the reused
-    TikTok client so the next sweep does a fresh check. Admins + superadmins.
-    """
+    """Close the current broadcast and let the next sweep recheck the creator."""
     sub = await session.get(Subscription, sub_id)
     if not sub:
         raise HTTPException(404, "Not found")
     sub.is_live = False
-    # clear dedup cache for all possible prefixes
-    try:
-        from ...poller import _last_room_cache, _close_open_sessions
-        for pfx in ("tt:", "yt:", "kk:", "twitch:"):
-            _last_room_cache.pop(pfx + sub.tiktok_username, None)
-        if (sub.platform or "tiktok") == "tiktok":
-            try:
-                from ...infrastructure.checkers.tiktok import checker
-                checker.drop(sub.tiktok_username)  # pop + close httpx (bare pop leaks)
-            except Exception:
-                pass
-        await _close_open_sessions(session, sub.id, datetime.now(timezone.utc))
-    except Exception:
-        pass
+    await _close_open_sessions(session, sub.id, datetime.now(timezone.utc))
     await session.commit()
+    forget_room(sub.platform, sub.tiktok_username)
     await log_audit(user["username"], "creator.offline", f"marked @{sub.tiktok_username} offline")
     return {"msg": f"Marked @{sub.tiktok_username} offline — next sweep will re-check fresh"}
 
@@ -267,6 +254,7 @@ async def delete_sub(sub_id: int, session: AsyncSession = Depends(get_session), 
         await session.delete(row)
     await session.delete(sub)
     await session.commit()
+    forget_room(sub.platform, name)
     await log_audit(user["username"], "creator.remove", f"removed @{name}")
     return {"msg": "Deleted"}
 
