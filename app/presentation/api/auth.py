@@ -2,7 +2,7 @@
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...infrastructure.persistence.database import get_session
@@ -60,6 +60,14 @@ async def login(payload: LoginIn, request: Request, session: AsyncSession = Depe
         select(User).where(User.username == payload.username.strip().lower())
     )
     user = result.scalar_one_or_none()
+    if user is None:
+        # Older deployments stored the bootstrap username exactly as configured.
+        matches = await session.scalars(select(User).where(
+            User.role == "superadmin",
+            func.lower(func.trim(User.username)) == payload.username.strip().lower(),
+        ).limit(2))
+        candidates = matches.all()
+        user = candidates[0] if len(candidates) == 1 else None
     if not user or not user.is_active or not verify_password(payload.password, user.password_hash):
         raise HTTPException(401, "Invalid username or password")
     _login_attempts.pop(ip, None)  # success resets the window

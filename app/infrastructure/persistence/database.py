@@ -403,7 +403,7 @@ async def init_db():
         if count is None:
             session.add(
                 User(
-                    username=settings.SUPERADMIN_USER,
+                    username=settings.SUPERADMIN_USER.strip().lower(),
                     password_hash=hash_password(settings.SUPERADMIN_PASS),
                     role="superadmin",
                     is_active=True,
