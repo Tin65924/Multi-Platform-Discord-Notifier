@@ -250,3 +250,46 @@ def test_creator_tracking_preferences(pilot, monkeypatch):
             await routes.update_style(1, SubscriptionStyleIn(track_uploads=True), db, actor)
         assert await u.advance(1, HANDLE, "123", [NEW, PIN], 1300, "deliver") is None
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("case", ["ok", "empty", "blocked", "timeout"])
+def test_manual_upload_uses_separate_destination_and_preserves_history(pilot, monkeypatch, case):
+    from fastapi import HTTPException
+    from unittest.mock import AsyncMock
+    from app.presentation.api import subscriptions as routes
+
+    sends = []
+    def serve(request):
+        if request.method == "GET":
+            if case == "blocked":
+                return httpx.Response(403)
+            # Older pinned video first. Duplicate IDs must not duplicate the send.
+            ids = [] if case == "empty" else [OLD, NEW, NEW]
+            return html("__FRONTITY_CONNECT_STATE__", profile(ids))
+        assert request.url.params["wait"] == "true"
+        assert str(request.url).split("?")[0] == HOOK
+        sends.append(json.loads(request.content))
+        if case == "timeout":
+            raise httpx.ReadTimeout("lost response")
+        return httpx.Response(200)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(serve))
+    monkeypatch.setattr(routes.httpx, "AsyncClient", lambda **kwargs: client)
+    monkeypatch.setattr(routes, "log_audit", AsyncMock())
+
+    async def run():
+        async with pilot() as db:
+            call = routes.send_test_upload(1, db, {"username": "tester"})
+            if case == "ok":
+                assert (await call)["video_url"].endswith("/" + NEW)
+            else:
+                with pytest.raises(HTTPException) as exc:
+                    await call
+                assert exc.value.status_code == (404 if case == "empty" else 502)
+        assert 1 not in routes._upload_tests_in_progress
+        async with pilot() as db:
+            assert await db.scalar(select(u.Subscription.upload_checkpoint)) is None
+            assert await db.scalar(select(u.UploadNotice.video_id)) is None
+    asyncio.run(run())
+    expected = {"content": f"Testing upload\n{u.ROOT}/@{HANDLE}/video/{NEW}", "allowed_mentions": {"parse": []}}
+    assert sends == ([expected] if case in ("ok", "timeout") else [])
