@@ -49,6 +49,8 @@ async def list_subs(session: AsyncSession = Depends(get_session), user=Depends(r
             "last_checked_at": s.last_checked_at.isoformat() if s.last_checked_at else None,
             "last_notified_at": s.last_notified_at.isoformat() if s.last_notified_at else None,
             "enabled": s.enabled,
+            "track_live": s.track_live,
+            "track_uploads": s.track_uploads,
         }
         for s in subs
     ]
@@ -68,6 +70,9 @@ async def create_sub(payload: SubscriptionCreate, session: AsyncSession = Depend
     if existing.scalar_one_or_none():
         raise HTTPException(409, f"{display_account(platform, username)} is already tracked on {label}")
     sub = Subscription(platform=platform, tiktok_username=username)
+    if platform == "tiktok":
+        sub.track_live = payload.track_live
+        sub.track_uploads = payload.track_uploads
     session.add(sub)
     await session.commit()
     await session.refresh(sub)
@@ -81,6 +86,16 @@ async def update_style(sub_id: int, payload: SubscriptionStyleIn, session: Async
     sub = await session.get(Subscription, sub_id)
     if not sub:
         raise HTTPException(404, "Not found")
+    stop_live = sub.platform == "tiktok" and sub.track_live and payload.track_live is False
+    if sub.platform == "tiktok":
+        if payload.track_live is not None:
+            sub.track_live = payload.track_live
+        if stop_live:
+            sub.is_live = False
+            await _close_open_sessions(session, sub.id, datetime.now(timezone.utc))
+        if payload.track_uploads is not None and sub.track_uploads != payload.track_uploads:
+            sub.track_uploads = payload.track_uploads
+            sub.upload_checkpoint = None
     sub.author_name = (payload.author_name or "")[:128] or None
     sub.discord_username = (payload.discord_username or "")[:64] or None
     sub.discord_user_id = (payload.discord_user_id or "")[:32] or None
@@ -91,6 +106,8 @@ async def update_style(sub_id: int, payload: SubscriptionStyleIn, session: Async
     sub.image_url = payload.image_url
     sub.color = payload.color
     await session.commit()
+    if stop_live:
+        forget_room(sub.platform, sub.tiktok_username)
     await log_audit(user["username"], "creator.style", f"styled @{sub.tiktok_username}")
     return {"msg": f"Style saved for @{sub.tiktok_username}"}
 

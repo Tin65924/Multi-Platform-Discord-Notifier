@@ -64,6 +64,8 @@ def normalize_handle(platform: str, raw: str) -> str:
 
 
 class SubscriptionCreate(BaseModel):
+    track_live: bool = True
+    track_uploads: bool = True
     platform: str = "tiktok"
     creator_input: str | None = None
     tiktok_input: str | None = None  # legacy alias (implies tiktok)
@@ -154,6 +156,8 @@ class SubscriptionStyleIn(BaseModel):
     is always the global template — no per-creator overrides for either.
     """
 
+    track_live: bool | None = None
+    track_uploads: bool | None = None
     author_name: str | None = None
     discord_username: str | None = None
     discord_user_id: str | None = None

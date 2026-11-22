@@ -203,6 +203,7 @@ async def _maintenance_renames(session, now):
         select(Subscription).where(
             Subscription.enabled == True,  # noqa
             Subscription.platform == "tiktok",
+            Subscription.track_live.is_(True),
             Subscription.first_not_found_at.is_not(None),
         )
     )

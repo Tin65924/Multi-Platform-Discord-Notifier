@@ -93,6 +93,7 @@ class SubscriptionRepo:
                     Subscription.last_notified_at, Subscription.first_not_found_at,
                 )).where(
                     Subscription.enabled == True,  # noqa
+                    Subscription.track_live.is_(True),
                     or_(*conds),
                 )
             )
@@ -106,7 +107,8 @@ class SubscriptionRepo:
     async def check_in(self, sub_id: int, at: datetime) -> CreatorCard | None:
         async with async_session() as session:
             result = await session.scalars(
-                update(Subscription).where(Subscription.id == sub_id)
+                update(Subscription).where(Subscription.id == sub_id, Subscription.enabled.is_(True),
+                                           Subscription.track_live.is_(True))
                 .values(last_checked_at=at).returning(Subscription)
             )
             sub = result.one_or_none()

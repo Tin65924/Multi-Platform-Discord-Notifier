@@ -219,3 +219,34 @@ def test_anchored_creator_cannot_be_replaced(pilot):
         async with pilot() as db:
             assert await db.scalar(select(u.Subscription.upload_checkpoint)) is None
     asyncio.run(run())
+
+
+def test_creator_tracking_preferences(pilot, monkeypatch):
+    from datetime import datetime, timezone
+    from unittest.mock import AsyncMock
+    from app.infrastructure.persistence import repos
+    from app.presentation.api import subscriptions as routes
+    from app.schemas import SubscriptionStyleIn
+
+    monkeypatch.setattr(repos, "async_session", pilot)
+    monkeypatch.setattr(routes, "log_audit", AsyncMock())
+
+    async def run():
+        repo = repos.SubscriptionRepo()
+        now = datetime.now(timezone.utc)
+        actor = {"username": "operator"}
+        await u.advance(1, HANDLE, "123", [OLD], 1000, "deliver")
+        async with pilot() as db:
+            await routes.update_style(1, SubscriptionStyleIn(track_live=False), db, actor)
+        assert await repo.snapshot("tiktok") == []
+        assert await repo.check_in(1, now) is None
+        assert await u.advance(1, HANDLE, "123", [NEW], 1100, "deliver") == (1000, [NEW])
+        async with pilot() as db:
+            await routes.update_style(1, SubscriptionStyleIn(track_live=True, track_uploads=False), db, actor)
+        assert [c.id for c in await repo.snapshot("tiktok")] == [1]
+        assert await u.advance(1, HANDLE, "123", [PIN], 1200, "deliver") is None
+        assert await u.notice(None, 1, HANDLE, PIN, 1200, "deliver") == "removed"
+        async with pilot() as db:
+            await routes.update_style(1, SubscriptionStyleIn(track_uploads=True), db, actor)
+        assert await u.advance(1, HANDLE, "123", [NEW, PIN], 1300, "deliver") is None
+    asyncio.run(run())
