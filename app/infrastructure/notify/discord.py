@@ -291,9 +291,15 @@ def _retry_after_seconds(resp) -> int:
     return 0
 
 
+def live_destination_ready(url):
+    if _settings.RELAY_URL:
+        return bool(_settings.RELAY_URL.startswith("https://") and _settings.RELAY_SECRET.strip())
+    return bool(url and "discord.com/api/webhooks" in url)
+
+
 async def send_webhook(webhook_url: str, payload: dict, timeout: int = 10) -> bool:
     global _backoff_until
-    if not webhook_url or "discord.com/api/webhooks" not in webhook_url:
+    if not live_destination_ready(webhook_url):
         logger.error("webhook url invalid")
         return False
     now = time.monotonic()
@@ -322,7 +328,7 @@ async def send_webhook(webhook_url: str, payload: dict, timeout: int = 10) -> bo
                 logger.info("webhook sending via relay")
                 resp = await client.post(
                     with_components_param(relay_url),
-                    json={"secret": relay_secret, "payload": payload},
+                    json={"kind": "live", "secret": relay_secret, "payload": payload},
                 )
             else:
                 resp = await client.post(with_components_param(webhook_url), json=payload)

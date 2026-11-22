@@ -20,7 +20,7 @@ from ...security import (
     log_audit,
 )
 from ...infrastructure.checkers.tiktok import checker, fetch_tiktok_profile
-from ...infrastructure.notify.discord import send_webhook, platform_label, display_account
+from ...infrastructure.notify.discord import send_webhook, live_destination_ready, platform_label, display_account
 from ...infrastructure.notify.discord import served_photo_url
 from ...infrastructure.media.photos import process_upload, MAX_UPLOAD_BYTES
 from .common import _payload_for, _webhook_cfg, logger, settings
@@ -309,7 +309,7 @@ async def send_test_upload(sub_id: int, session: AsyncSession = Depends(get_sess
                 raise HTTPException(404, "No public uploads were found for this creator.")
             link = f"{uploads.ROOT}/@{handle}/video/{vid}"
             try:
-                response = await client.post(url, params={"wait": "true"}, json={
+                response = await uploads.post_upload(client, url, {
                     "content": f"Testing upload\n{link}", "allowed_mentions": {"parse": []},
                 })
             except httpx.RequestError:
@@ -331,7 +331,7 @@ async def test_webhook(sub_id: int, session: AsyncSession = Depends(get_session)
         raise HTTPException(404, "Not found")
     gs = await session.get(GlobalSettings, 1)
     webhook_url, ping, msg, everyone, image, color = _webhook_cfg(gs)
-    if not webhook_url:
+    if not live_destination_ready(webhook_url):
         raise HTTPException(400, "Configure webhook first (paste it in the top card)")
     payload = _payload_for(sub, msg, ping, everyone, image, color)
     ok = await send_webhook(webhook_url, payload, timeout=settings.WEBHOOK_TIMEOUT_SECONDS)
@@ -354,7 +354,7 @@ async def force_notify(sub_id: int, session: AsyncSession = Depends(get_session)
         raise HTTPException(404, "Not found")
     gs = await session.get(GlobalSettings, 1)
     webhook_url, ping, msg, everyone, image, color = _webhook_cfg(gs)
-    if not webhook_url:
+    if not live_destination_ready(webhook_url):
         raise HTTPException(400, "Configure webhook first (paste it in the top card)")
     payload = _payload_for(sub, msg, ping, everyone, image, color)
     ok = await send_webhook(webhook_url, payload, timeout=settings.WEBHOOK_TIMEOUT_SECONDS)

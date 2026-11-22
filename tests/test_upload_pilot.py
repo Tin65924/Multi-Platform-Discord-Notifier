@@ -44,6 +44,7 @@ def pilot(tmp_path, monkeypatch):
     monkeypatch.setattr(u.settings, "TIKTOK_UPLOAD_WEBHOOK_URL", HOOK)
     monkeypatch.setattr(u.settings, "DASHBOARD_WEBHOOK_URL", "https://discord.com/api/webhooks/11/live")
     monkeypatch.setattr(u.settings, "RELAY_URL", "")
+    monkeypatch.setattr(u.settings, "RELAY_SECRET", "")
     async def setup():
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -55,8 +56,27 @@ def pilot(tmp_path, monkeypatch):
     asyncio.run(engine.dispose())
 
 
+@pytest.fixture(params=["direct", "relay"])
+def upload_payload(request, pilot, monkeypatch):
+    relay = request.param == "relay"
+    url = "https://relay.example.test" if relay else HOOK
+    if relay:
+        monkeypatch.setattr(u.settings, "RELAY_URL", url)
+        monkeypatch.setattr(u.settings, "RELAY_SECRET", "fixture-secret")
+        monkeypatch.setattr(u.settings, "TIKTOK_UPLOAD_WEBHOOK_URL", "")
+    def unpack(req):
+        assert str(req.url).split("?")[0].rstrip("/") == url
+        body = json.loads(req.content)
+        if relay:
+            assert body["kind"] == "upload" and "secret" not in body
+            assert req.headers["authorization"] == "Bearer fixture-secret"
+            return body["payload"]
+        return body
+    return unpack
+
+
 @pytest.mark.parametrize("outcome", ["ok", "timeout", "429"])
-def test_full_flow(pilot, monkeypatch, outcome):
+def test_full_flow(pilot, monkeypatch, outcome, upload_payload):
     now = [1000]
     monkeypatch.setattr(u, "time", SimpleNamespace(time=lambda: now[0]))
     ids = [OLD]
@@ -64,8 +84,7 @@ def test_full_flow(pilot, monkeypatch, outcome):
     dates = {PIN: 100, NEW: 1050}
     def transport(req):
         if req.method == "POST":
-            assert str(req.url).split("?")[0] == HOOK
-            assert json.loads(req.content)["allowed_mentions"] == {"parse": []}
+            assert upload_payload(req)["allowed_mentions"] == {"parse": []}
             sends.append(req)
             if outcome == "timeout":
                 raise httpx.ReadTimeout("lost response")
@@ -253,7 +272,7 @@ def test_creator_tracking_preferences(pilot, monkeypatch):
 
 
 @pytest.mark.parametrize("case", ["ok", "empty", "blocked", "timeout"])
-def test_manual_upload_uses_separate_destination_and_preserves_history(pilot, monkeypatch, case):
+def test_manual_upload_uses_separate_destination_and_preserves_history(pilot, monkeypatch, case, upload_payload):
     from fastapi import HTTPException
     from unittest.mock import AsyncMock
     from app.presentation.api import subscriptions as routes
@@ -267,8 +286,7 @@ def test_manual_upload_uses_separate_destination_and_preserves_history(pilot, mo
             ids = [] if case == "empty" else [OLD, NEW, NEW]
             return html("__FRONTITY_CONNECT_STATE__", profile(ids))
         assert request.url.params["wait"] == "true"
-        assert str(request.url).split("?")[0] == HOOK
-        sends.append(json.loads(request.content))
+        sends.append(upload_payload(request))
         if case == "timeout":
             raise httpx.ReadTimeout("lost response")
         return httpx.Response(200)

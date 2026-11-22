@@ -717,7 +717,7 @@ async function loadSettings() {
     defImage.value = s.embed_image_url || '';
     defColor.value = (s.embed_color || '#FF0050').toLowerCase();
     defColorHex.textContent = (s.embed_color || '#FF0050').toUpperCase();
-    settingsMsg.textContent = 'Configured: ' + s.webhook_url_masked;
+    settingsMsg.textContent = s.live_relay ? 'Webhook routing managed by Cloudflare.' : 'Configured: ' + s.webhook_url_masked;
     settingsMsg.className = 'msg msg-ok';
   }
   NOTIF_ON = s.notifications_enabled !== false;

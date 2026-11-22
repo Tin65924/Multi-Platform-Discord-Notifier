@@ -96,15 +96,27 @@ async def advance(sub_id, handle, owner, ids, now, mode):
 
 
 def destination(gs):
+    if gs and gs.notifications_enabled is False:
+        return None
+    if settings.RELAY_URL:
+        return settings.RELAY_URL if settings.RELAY_URL.startswith("https://") and settings.RELAY_SECRET.strip() else None
     url = settings.TIKTOK_UPLOAD_WEBHOOK_URL
-    if (not DISCORD_WEBHOOK_RE.fullmatch(url) or not url.startswith("https://discord.com/")
-            or settings.RELAY_URL or (gs and gs.notifications_enabled is False)):
+    if not DISCORD_WEBHOOK_RE.fullmatch(url) or not url.startswith("https://discord.com/"):
         return None
     webhook_id = url.split("/")[-2]
     for live in (settings.DASHBOARD_WEBHOOK_URL, gs.webhook_url if gs else None):
         if live and (not DISCORD_WEBHOOK_RE.fullmatch(live) or live.split("/")[-2] == webhook_id):
             return None
     return url
+
+
+async def post_upload(client, url, payload):
+    if settings.RELAY_URL:
+        # An older LIVE-only Worker rejects this envelope (no body secret).
+        return await client.post(url, params={"wait": "true"},
+                                 headers={"Authorization": "Bearer " + settings.RELAY_SECRET.strip()},
+                                 json={"kind": "upload", "payload": payload})
+    return await client.post(url, params={"wait": "true"}, json=payload)
 
 
 async def notice(client, sub_id, handle, vid, published, mode):
@@ -127,7 +139,7 @@ async def notice(client, sub_id, handle, vid, published, mode):
             row.status = "stale"
         else:
             try:
-                response = await client.post(url, params={"wait": "true"}, json={
+                response = await post_upload(client, url, {
                     "content": f"@{handle} posted a TikTok: {ROOT}/@{handle}/video/{vid}",
                     "allowed_mentions": {"parse": []},
                 })
