@@ -491,3 +491,21 @@ label.mini { font-size: 11px; color: var(--pt-muted); display: block; margin-bot
   to { transform: translateX(110%); opacity: 0; }
 }
 @media (max-width: 640px) { .pt-toasts { top: 66px; right: 12px; } }
+
+.workspace-title { margin: .25rem 0 1rem; font: 650 clamp(1.75rem, 4vw, 2.5rem)/1.15 "Segoe UI", sans-serif; }
+body.pt-body { font-size: 1rem; }
+.pt-nav { margin-left: 0; overflow-x: auto; min-width: 0; }
+.pt-nav__link { font: 500 .9rem/1.4 "Segoe UI", sans-serif; text-transform: none; letter-spacing: normal; padding: .65rem .8rem; }
+.pt-header__inner, .pt-section { width: min(94%, 76rem); margin-inline: auto; }
+.pt-section .card, .pt-login-box { border-radius: .65rem; box-shadow: none; }
+.pt-section .grid2 > *, .pt-section input { min-width: 0; }
+.pt-section .hint, .pt-login-box label { font-size: .875rem; }
+.pt-login-box label { font-weight: 600; margin-bottom: -.45rem; }
+#msg:empty { display: none; }
+:focus-visible { outline: 2px solid var(--pt-gold); outline-offset: 2px; }
+@media (max-width: 800px) {
+  .pt-header__inner { display: grid; height: auto; gap: .25rem; padding-block: .5rem; }
+  .pt-userbox { grid-row: 1; }
+  .pt-nav { margin: 0; }
+  .pt-section { padding-top: 1.25rem; }
+}
