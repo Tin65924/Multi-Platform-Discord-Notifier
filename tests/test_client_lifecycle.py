@@ -55,6 +55,8 @@ def test_actual_library_routes_preserve_status_and_room_identity(clients):
             return httpx.Response(200, json={"message": "user_not_found"})
         if name == "blocked":
             return httpx.Response(403, text="blocked")
+        if name == "invalid_json":
+            return httpx.Response(200, text="temporary challenge")
         if name == "timeout":
             raise httpx.ReadTimeout("test timeout")
         return response(request, live=name != "offline", room="456", missing=name == "fallback")
@@ -64,11 +66,12 @@ def test_actual_library_routes_preserve_status_and_room_identity(clients):
         checker = tt.TikTokChecker()
         try:
             results = await asyncio.gather(*(checker.is_live(name) for name in
-                                            ("@LIVE", "offline", "missing", "blocked", "timeout", "fallback")))
+                                            ("@LIVE", "offline", "missing", "blocked", "timeout", "fallback", "invalid_json")))
             assert [(r.username, r.is_live, r.error, r.room_id) for r in results] == [
                 ("live", True, None, "456"), ("offline", False, None, None),
-                ("missing", False, "not_found", None), ("blocked", False, "check_failed", None),
+                ("missing", False, "live_unavailable", None), ("blocked", False, "check_failed", None),
                 ("timeout", False, "check_failed", None), ("fallback", True, None, "live-fallback"),
+                ("invalid_json", False, "check_failed", None),
             ]
             assert len(created) == 2
         finally:
