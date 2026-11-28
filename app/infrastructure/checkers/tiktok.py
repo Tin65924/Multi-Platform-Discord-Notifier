@@ -228,10 +228,14 @@ class TikTokChecker:
                 # proof of a rename or of an offline transition.
                 logger.info("tiktok live unavailable user=%s reason=user_not_found_ambiguous", clean)
                 return LiveInfo(is_live=False, username=clean, error="live_unavailable")
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as exc:
                 # Empty, challenged and otherwise non-JSON upstream responses
                 # cannot establish live status. Avoid logging response bodies.
-                logger.info("tiktok check failed user=%s err=invalid_json", clean)
+                body = exc.doc.lstrip()
+                kind = "empty" if not body else (
+                    "html" if body[:32].lower().startswith(("<!doctype", "<html")) else "other"
+                )
+                logger.info("tiktok check failed user=%s err=invalid_json body_kind=%s", clean, kind)
                 return LiveInfo(is_live=False, username=clean, error="check_failed")
             except Exception as e:
                 logger.info(f"tiktok check failed user={clean} err={type(e).__name__}")

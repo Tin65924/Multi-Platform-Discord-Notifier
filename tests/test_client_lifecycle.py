@@ -47,7 +47,8 @@ def test_pool_size_is_bounded(size):
         tt.TikTokChecker(size)
 
 
-def test_actual_library_routes_preserve_status_and_room_identity(clients):
+def test_actual_library_routes_preserve_status_and_room_identity(clients, caplog):
+    caplog.set_level("INFO", logger=tt.__name__)
     def handler(request):
         name = request.url.params["uniqueId"].lstrip("@")
         assert request.url.params["referer"] == f"https://www.tiktok.com/@{name}/live"
@@ -78,6 +79,8 @@ def test_actual_library_routes_preserve_status_and_room_identity(clients):
             await checker.aclose()
         assert all(c.httpx_client.is_closed for c in created)
     asyncio.run(run())
+    assert "err=invalid_json body_kind=other" in caplog.text
+    assert "temporary challenge" not in caplog.text
 
 
 def test_creator_churn_has_constant_clients_and_bounded_retained_heap(clients):
