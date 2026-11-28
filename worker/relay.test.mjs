@@ -9,6 +9,7 @@ test('routes LIVE and uploads to distinct secrets and rejects ambiguous delivery
   const calls = [];
   t.mock.method(globalThis, 'fetch', async (url, init) => {
     calls.push(url);
+    assert.equal(init.redirect, 'manual');
     assert.deepEqual(JSON.parse(init.body), payload);
     return new Response(null, {status: 204});
   });
@@ -25,6 +26,23 @@ test('routes LIVE and uploads to distinct secrets and rejects ambiguous delivery
   for (const value of ['', 'https://discord.com/api/webhooks/11/other'])
     assert.equal((await post({kind:'upload'}, true, {...env, DISCORD_UPLOAD_WEBHOOK_URL:value})).status, 503);
   assert.equal(calls.length, 3);
+});
+
+test('rejects redirects without exposing their location', async (t) => {
+  const env = {RELAY_SECRET:'shared', DISCORD_WEBHOOK_URL:'https://discord.com/api/webhooks/11/private-token'};
+  let calls = 0;
+  t.mock.method(console, 'error', () => {});
+  t.mock.method(globalThis, 'fetch', async (_url, init) => {
+    calls++;
+    assert.equal(init.redirect, 'manual');
+    return new Response(null, {status: 302, headers:{Location:'https://example.com/private-token'}});
+  });
+  const req = new Request('https://relay.test/', {method:'POST', body: JSON.stringify({secret:'shared',payload:{}})});
+  const result = await worker.fetch(req, env);
+  assert.equal(result.status, 502);
+  assert.equal(result.headers.get('location'), null);
+  assert.doesNotMatch(await result.text(), /private-token/);
+  assert.equal(calls, 1);
 });
 
 test('does not expose webhook credentials in fetch error logs', async (t) => {

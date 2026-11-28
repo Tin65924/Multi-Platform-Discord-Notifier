@@ -71,7 +71,8 @@ export default {
     try {
       upstream = await fetch(target.toString(), {
         method: "POST",
-        redirect: "error",
+        // Workers supports manual/follow, but not the standard "error" mode.
+        redirect: "manual",
         headers: {
           "Content-Type": "application/json",
           "User-Agent": "PlaytopiaLiveNotifier/1.0",
@@ -90,6 +91,11 @@ export default {
       return new Response("Upstream fetch failed", { status: 502 });
     }
 
+    // Never follow a redirect or return its Location, which may contain a token.
+    if (upstream.status >= 300 && upstream.status < 400) {
+      console.error("discord_upstream_redirect", {kind, status: upstream.status});
+      return new Response("Upstream redirect rejected", {status: 502});
+    }
     const respBody = upstream.status === 204 ? null : await upstream.text();
     const out = new Response(respBody, { status: upstream.status });
     const ra = upstream.headers.get("retry-after");
