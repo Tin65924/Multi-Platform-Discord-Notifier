@@ -147,7 +147,8 @@ def test_destination_isolation(pilot, monkeypatch):
     assert u.destination(gs) is None
 
 
-def test_unusable_pages_preserve_checkpoint(pilot):
+def test_unusable_pages_preserve_checkpoint(pilot, caplog):
+    caplog.set_level("INFO", logger="app.uploads")
     async def run():
         counts = Counter()
         bad = profile([OLD])
@@ -160,6 +161,10 @@ def test_unusable_pages_preserve_checkpoint(pilot):
         async with pilot() as db:
             assert await db.scalar(select(u.Subscription.upload_checkpoint)) is None
     asyncio.run(run())
+    assert "handle=pilot reason=http_403" in caplog.text
+    assert "handle=pilot reason=missing_page_state" in caplog.text
+    assert "handle=pilot reason=unexpected_video" in caplog.text
+    assert "handle=pilot reason=page_too_large" in caplog.text
 
 
 

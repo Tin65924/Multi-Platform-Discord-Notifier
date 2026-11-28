@@ -223,8 +223,16 @@ class TikTokChecker:
             try:
                 live = await asyncio.wait_for(client.fetch_is_live(unique_id=clean), timeout=12)
             except UserNotFoundError:
-                logger.info(f"tiktok not_found user={clean}")
-                return LiveInfo(is_live=False, username=clean, error="not_found")
+                # TikTokLive raises this for accounts that cannot go LIVE or
+                # have never gone LIVE as well as missing accounts. It is not
+                # proof of a rename or of an offline transition.
+                logger.info("tiktok live unavailable user=%s reason=user_not_found_ambiguous", clean)
+                return LiveInfo(is_live=False, username=clean, error="live_unavailable")
+            except json.JSONDecodeError:
+                # Empty, challenged and otherwise non-JSON upstream responses
+                # cannot establish live status. Avoid logging response bodies.
+                logger.info("tiktok check failed user=%s err=invalid_json", clean)
+                return LiveInfo(is_live=False, username=clean, error="check_failed")
             except Exception as e:
                 logger.info(f"tiktok check failed user={clean} err={type(e).__name__}")
                 return LiveInfo(is_live=False, username=clean, error="check_failed")

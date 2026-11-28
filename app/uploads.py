@@ -182,8 +182,24 @@ async def check(client, sub_id, handle, mode, counts):
     try:
         state = await page(client, "/embed/@" + handle, b"__FRONTITY_CONNECT_STATE__")
         owner, ids = feed(state, handle)
-    except PAGE_ERRORS:
+    except PAGE_ERRORS as exc:
         counts["feed_unverified"] += 1
+        # Whitelist reasons: exception strings may contain URLs or response data.
+        if isinstance(exc, httpx.HTTPStatusError):
+            reason = f"http_{exc.response.status_code}"
+        elif isinstance(exc, (httpx.TimeoutException, TimeoutError)):
+            reason = "timeout"
+        elif isinstance(exc, httpx.HTTPError):
+            reason = "transport"
+        elif isinstance(exc, json.JSONDecodeError):
+            reason = "invalid_json"
+        elif isinstance(exc, KeyError):
+            reason = "missing_field"
+        elif isinstance(exc, ValueError) and str(exc) in {"missing page state", "page too large", "unconfirmed profile", "unexpected feed", "unexpected video"}:
+            reason = str(exc).replace(" ", "_")
+        else:
+            reason = "invalid_feed"
+        log.info("upload feed unverified sub=%d handle=%s reason=%s", sub_id, handle, reason)
         return
     changes = await advance(sub_id, handle, owner, ids, now, mode)
     if changes is None:
