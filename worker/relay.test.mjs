@@ -26,3 +26,14 @@ test('routes LIVE and uploads to distinct secrets and rejects ambiguous delivery
     assert.equal((await post({kind:'upload'}, true, {...env, DISCORD_UPLOAD_WEBHOOK_URL:value})).status, 503);
   assert.equal(calls.length, 3);
 });
+
+test('does not expose webhook credentials in fetch error logs', async (t) => {
+  const env = {RELAY_SECRET:'shared', DISCORD_WEBHOOK_URL:'https://discord.com/api/webhooks/11/private-token'};
+  let logs = [];
+  t.mock.method(console, 'error', (...args) => logs.push(JSON.stringify(args)));
+  t.mock.method(globalThis, 'fetch', async () => {throw new Error('1042 https://discord.com/api/webhooks/11/private-token');});
+  const req = new Request('https://relay.test/', {method:'POST', body: JSON.stringify({secret:'shared',payload:{content:'hi'}})});
+  assert.equal((await worker.fetch(req,env)).status, 502);
+  assert.match(logs[0], /cloudflare_1042/);
+  assert.doesNotMatch(logs[0], /private-token|discord.com/);
+});

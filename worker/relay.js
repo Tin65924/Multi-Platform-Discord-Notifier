@@ -79,6 +79,14 @@ export default {
         body: JSON.stringify(body.payload ?? {}),
       });
     } catch (e) {
+      // Only record an allowlisted category; exception messages can contain webhook tokens.
+      const message = String(e?.message || "");
+      const code = message.match(/\b(1019|1021|1022|1024|1042|1101|1102|1103|1105)\b/)?.[1];
+      const category = code ? "cloudflare_" + code
+        : /redirect/i.test(message) ? "redirect"
+        : /timeout/i.test(message) ? "timeout"
+        : "network_or_other";
+      console.error("discord_upstream_fetch", {kind, category});
       return new Response("Upstream fetch failed", { status: 502 });
     }
 
